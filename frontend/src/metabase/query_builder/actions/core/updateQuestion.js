@@ -42,7 +42,7 @@ export const updateQuestion = (
 ) => {
   return async (dispatch, getState) => {
     const currentQuestion = getQuestion(getState());
-    const mode = getQueryBuilderMode(getState());
+    const queryBuilderMode = getQueryBuilderMode(getState());
 
     const shouldConvertIntoAdHoc = newQuestion.query().isEditable();
 
@@ -50,7 +50,7 @@ export const updateQuestion = (
       shouldConvertIntoAdHoc &&
       !getIsEditing(getState()) &&
       newQuestion.isSaved() &&
-      mode !== "dataset"
+      queryBuilderMode !== "dataset"
     ) {
       newQuestion = newQuestion.withoutNameAndId();
 
@@ -113,7 +113,7 @@ export const updateQuestion = (
     }
 
     // Native query should never be in notebook mode (metabase#12651)
-    if (mode === "notebook" && newQuestion.isNative()) {
+    if (queryBuilderMode === "notebook" && newQuestion.isNative()) {
       await dispatch(
         setQueryBuilderMode("view", {
           shouldUpdateUrl: false,
@@ -137,7 +137,7 @@ export const updateQuestion = (
       oldQuestion: currentQuestion,
       newQuestion,
       isTemplateTagEditorVisible,
-      queryBuilderMode: mode,
+      queryBuilderMode,
     });
     if (nextTagEditorVisibilityState !== "deferToCurrentState") {
       dispatch(
