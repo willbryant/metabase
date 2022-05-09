@@ -41,7 +41,7 @@ export const updateQuestion = (
   { run = false, shouldUpdateUrl = false } = {},
 ) => {
   return async (dispatch, getState) => {
-    const oldQuestion = getQuestion(getState());
+    const currentQuestion = getQuestion(getState());
     const mode = getQueryBuilderMode(getState());
 
     const shouldConvertIntoAdHoc = newQuestion.query().isEditable();
@@ -63,7 +63,10 @@ export const updateQuestion = (
     }
 
     const queryResult = getFirstQueryResult(getState());
-    newQuestion = newQuestion.syncColumnsAndSettings(oldQuestion, queryResult);
+    newQuestion = newQuestion.syncColumnsAndSettings(
+      currentQuestion,
+      queryResult,
+    );
 
     if (run === "auto") {
       run = hasNewColumns(newQuestion, queryResult);
@@ -74,7 +77,7 @@ export const updateQuestion = (
     }
 
     const isPivot = newQuestion.display() === "pivot";
-    const wasPivot = oldQuestion.display() === "pivot";
+    const wasPivot = currentQuestion.display() === "pivot";
     const queryHasBreakouts =
       isPivot &&
       newQuestion.isStructured() &&
@@ -103,7 +106,7 @@ export const updateQuestion = (
         queryHasBreakouts &&
         !_.isEqual(
           newQuestion.setting("pivot_table.column_split"),
-          oldQuestion.setting("pivot_table.column_split"),
+          currentQuestion.setting("pivot_table.column_split"),
         ))
     ) {
       run = true; // force a run when switching to/from pivot or updating it's setting
@@ -131,7 +134,7 @@ export const updateQuestion = (
       getState(),
     );
     const nextTagEditorVisibilityState = getNextTemplateTagVisibilityState({
-      oldQuestion,
+      oldQuestion: currentQuestion,
       newQuestion,
       isTemplateTagEditorVisible,
       queryBuilderMode: mode,
@@ -147,7 +150,7 @@ export const updateQuestion = (
     try {
       if (
         !_.isEqual(
-          oldQuestion.query().dependentMetadata(),
+          currentQuestion.query().dependentMetadata(),
           newQuestion.query().dependentMetadata(),
         )
       ) {
