@@ -1,6 +1,8 @@
 import _ from "underscore";
 import { assocIn } from "icepick";
 
+import { isSupportedTemplateTagForModel } from "metabase/lib/data-modeling/utils";
+
 import StructuredQuery from "metabase-lib/lib/queries/StructuredQuery";
 
 import {
@@ -11,7 +13,6 @@ import {
   getQuestion,
   getRawSeries,
 } from "../../selectors";
-import { getNextTemplateTagVisibilityState } from "../../utils";
 
 import { updateUrl } from "../navigation";
 import { setIsShowingTemplateTagsEditor } from "../native";
@@ -54,6 +55,33 @@ function checkShouldRerunPivotTableQuestion({
   return (
     isValidPivotTable && !_.isEqual(currentPivotSettings, newPivotSettings)
   );
+}
+
+export function getNextTemplateTagState({
+  currentQuestion,
+  newQuestion,
+  isVisible,
+  queryBuilderMode,
+}) {
+  const currentQuery = currentQuestion.query();
+  const nextQuery = newQuestion.query();
+  const previousTags = currentQuery.templateTagsWithoutSnippets?.() || [];
+  const nextTags = nextQuery.templateTagsWithoutSnippets?.() || [];
+
+  if (nextTags.length > previousTags.length) {
+    if (queryBuilderMode !== "dataset") {
+      return "visible";
+    }
+    return nextTags.every(isSupportedTemplateTagForModel)
+      ? "visible"
+      : "hidden";
+  }
+
+  if (nextTags.length === 0 && isVisible) {
+    return "hidden";
+  }
+
+  return;
 }
 
 /**
@@ -145,21 +173,17 @@ export const updateQuestion = (
       dispatch(updateUrl(null, { dirty: true }));
     }
 
-    const isTemplateTagEditorVisible = getIsShowingTemplateTagsEditor(
-      getState(),
-    );
-    const nextTagEditorVisibilityState = getNextTemplateTagVisibilityState({
-      oldQuestion: currentQuestion,
-      newQuestion,
-      isTemplateTagEditorVisible,
-      queryBuilderMode,
-    });
-    if (nextTagEditorVisibilityState !== "deferToCurrentState") {
-      dispatch(
-        setIsShowingTemplateTagsEditor(
-          nextTagEditorVisibilityState === "visible",
-        ),
-      );
+    if (currentQuestion.isNative() && newQuestion.isNative()) {
+      const isVisible = getIsShowingTemplateTagsEditor(getState());
+      const nextState = getNextTemplateTagState({
+        currentQuestion,
+        newQuestion,
+        queryBuilderMode,
+        isVisible,
+      });
+      if (nextState) {
+        setIsShowingTemplateTagsEditor(nextState === "visible");
+      }
     }
 
     try {
