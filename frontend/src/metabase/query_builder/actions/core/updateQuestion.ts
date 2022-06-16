@@ -23,7 +23,7 @@ import {
 import { updateUrl } from "../navigation";
 import { setIsShowingTemplateTagsEditor } from "../native";
 import { runQuestionQuery } from "../querying";
-import { onCloseQuestionDetails, setQueryBuilderMode } from "../ui";
+import { onCloseQuestionInfo, setQueryBuilderMode } from "../ui";
 
 import { loadMetadataForCard } from "./metadata";
 import { getQuestionWithDefaultVisualizationSettings } from "./utils";
@@ -133,7 +133,7 @@ export const updateQuestion = (
       // to start building a new ad-hoc question based on a dataset
       if (newQuestion.isDataset()) {
         newQuestion = newQuestion.setDataset(false);
-        dispatch(onCloseQuestionDetails());
+        dispatch(onCloseQuestionInfo());
       }
     }
 
