@@ -302,7 +302,6 @@ class PivotTable extends Component {
           key={key}
           style={{
             ...style,
-            backgroundColor: getBgLightColor(hasCustomColors),
           }}
           className={cx("overflow-hidden", {
             "border-right border-medium": !hasChildren,
@@ -413,11 +412,10 @@ class PivotTable extends Component {
               <div className="flex" style={{ height: topHeaderHeight }}>
                 {/* top left corner - displays left header columns */}
                 <div
-                  className={cx("flex align-end", {
+                  className={cx("flex align-end text-medium", {
                     "border-right border-bottom border-medium": leftHeaderWidth,
                   })}
                   style={{
-                    backgroundColor: getBgLightColor(hasCustomColors),
                     // add left spacing unless the header width is 0
                     paddingLeft: leftHeaderWidth && LEFT_HEADER_LEFT_SPACING,
                     width: leftHeaderWidth,
