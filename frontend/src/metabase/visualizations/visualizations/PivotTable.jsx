@@ -300,8 +300,7 @@ class PivotTable extends Component {
       return (
         <div
           key={key}
-          style={{
-            ...style,
+          style={style}
           }}
           className={cx("overflow-hidden", {
             "border-right border-medium": !hasChildren,
