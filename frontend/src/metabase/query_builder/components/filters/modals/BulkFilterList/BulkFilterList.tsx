@@ -23,7 +23,7 @@ import {
   ListRowLabel,
   FilterDivider,
 } from "./BulkFilterList.styled";
-import { sortDimensions } from "./utils";
+import { sortDimensions, isDimensionValid } from "./utils";
 
 export interface BulkFilterListProps {
   query: StructuredQuery;
@@ -48,7 +48,10 @@ const BulkFilterList = ({
 }: BulkFilterListProps): JSX.Element => {
   const [dimensions, segments] = useMemo(
     () => [
-      options.filter(isDimensionOption).sort(sortDimensions),
+      options
+        .filter(isDimensionOption)
+        .filter(isDimensionValid)
+        .sort(sortDimensions),
       options.filter(isSegmentOption),
     ],
     [options],
