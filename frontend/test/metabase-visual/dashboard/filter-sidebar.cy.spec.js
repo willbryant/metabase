@@ -24,7 +24,7 @@ describe.skip("visual tests > dashboard > filter sidebar", () => {
 
     cy.findByText("Label");
 
-    cy.percySnapshot();
+    cy.createPercySnapshot();
   });
 });
 
