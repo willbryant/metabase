@@ -340,7 +340,7 @@ export const NUMBER_COLUMN_SETTINGS = {
             value: "name",
           },
           {
-            name: t`Symbol Native` + ` ` + `(${symbol_native})`,
+            name: t`Local Symbol` + ` ` + `(${symbol_native})`,
             value: "symbol_native",
           },
         ],
