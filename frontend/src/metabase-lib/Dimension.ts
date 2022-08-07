@@ -1808,6 +1808,24 @@ const DATETIME_SUBDIMENSIONS = [
 
 const COORDINATE_SUBDIMENSIONS = [
   {
+    name: t`Bin every 0.005 degrees`,
+    options: {
+      binning: {
+        strategy: "bin-width",
+        "bin-width": 0.005,
+      },
+    },
+  },
+  {
+    name: t`Bin every 0.01 degrees`,
+    options: {
+      binning: {
+        strategy: "bin-width",
+        "bin-width": 0.01,
+      },
+    },
+  },
+  {
     name: t`Bin every 0.1 degrees`,
     options: {
       binning: {
