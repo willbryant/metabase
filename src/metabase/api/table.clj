@@ -178,6 +178,8 @@
                                                             {strategy param}))}]
                        :type "type/Coordinate"})
                     [default-entry
+                     [(deferred-tru "Bin every 0.005 degrees") ["bin-width" 0.005]]
+                     [(deferred-tru "Bin every 0.01 degrees") ["bin-width" 0.01]]
                      [(deferred-tru "Bin every 0.1 degrees") ["bin-width" 0.1]]
                      [(deferred-tru "Bin every 1 degree") ["bin-width" 1.0]]
                      [(deferred-tru "Bin every 10 degrees") ["bin-width" 10.0]]
