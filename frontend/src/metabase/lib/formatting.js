@@ -99,7 +99,10 @@ export function numberFormatterForOptions(options) {
   return new Intl.NumberFormat("en", {
     style: options.number_style,
     currency: options.currency,
-    currencyDisplay: options.currency_style,
+    currencyDisplay:
+      options.currency_style === "symbol_native"
+        ? "narrowSymbol"
+        : options.currency_style,
     // always use grouping separators, but we may replace/remove them depending on number_separators option
     useGrouping: true,
     minimumIntegerDigits: options.minimumIntegerDigits,
@@ -111,12 +114,16 @@ export function numberFormatterForOptions(options) {
 }
 
 let currencyMapCache;
-export function getCurrencySymbol(currencyCode) {
+export function getCurrencySymbol(currencyCode, isNative = false) {
   if (!currencyMapCache) {
     // only turn the array into a map if we call this function
     currencyMapCache = Object.fromEntries(currency);
   }
-  return currencyMapCache[currencyCode]?.symbol || currencyCode || "$";
+  const currencySymbol = isNative
+    ? currencyMapCache[currencyCode]?.symbol_native
+    : currencyMapCache[currencyCode]?.symbol;
+
+  return currencySymbol || currencyCode || "$";
 }
 
 export function formatNumber(number, options = {}) {
