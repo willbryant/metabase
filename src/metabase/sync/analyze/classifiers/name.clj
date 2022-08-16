@@ -30,14 +30,15 @@
    *  Convert field name to lowercase before matching against a pattern
    *  Consider a nil set-of-valid-base-types to mean \"match any base type\""
   [[#"^id$"                        any-type         :type/PK]
+   [#"^.*_category$"               int-or-text-type :type/Category]
    [#"^.*_lat$"                    float-type       :type/Latitude]
+   [#"^.*_latitude$"               float-type       :type/Latitude]
    [#"^.*_lon$"                    float-type       :type/Longitude]
    [#"^.*_lng$"                    float-type       :type/Longitude]
    [#"^.*_long$"                   float-type       :type/Longitude]
    [#"^.*_longitude$"              float-type       :type/Longitude]
    [#"^.*_type$"                   int-or-text-type :type/Category]
    [#"^.*_url$"                    text-type        :type/URL]
-   [#"^_latitude$"                 float-type       :type/Latitude]
    [#"^active$"                    bool-or-int-type :type/Category]
    [#"^city$"                      text-type        :type/City]
    [#"^country"                    text-type        :type/Country]
@@ -106,7 +107,9 @@
    [#"description"                 text-type        :type/Description]
    [#"title"                       text-type        :type/Title]
    [#"comment"                     text-type        :type/Comment]
+   [#"birthda(?:te|y)"             date-type        :type/Birthdate]
    [#"birthda(?:te|y)"             timestamp-type   :type/Birthdate]
+   [#"(?:te|y)(?:_?)of(?:_?)birth" date-type        :type/Birthdate]
    [#"(?:te|y)(?:_?)of(?:_?)birth" timestamp-type   :type/Birthdate]])
 
 ;; Check that all the pattern tuples are valid
