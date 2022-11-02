@@ -1,10 +1,14 @@
 ---
-title: Metabase API documentation
+title: "Metabase API documentation"
 ---
 
 # Metabase API documentation
 
-_These reference files were generated from source comments by running `clojure -M:ee:run api-documentation`_.
+_These reference files were generated from source comments by running:_
+
+```
+clojure -M:ee:run api-documentation
+```
 
 ## About the Metabase API
 
@@ -17,7 +21,7 @@ Check out an introduction to the [Metabase API](https://www.metabase.com/learn/a
 
 ## API endpoints
 
-_* indicates endpoints used for features available on [paid plans](https://www.metabase.com/pricing/)._
+_* indicates endpoints used for features available on [paid plans](https://www.metabase.com/pricing)._
 
 
 - [Activity](api/activity.md)
