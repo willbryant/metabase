@@ -62,6 +62,12 @@
         ;; Fall back to using code if symbol isn't not supported on the Metabase frontend
         currency-code)
 
+      "symbol_native"
+      (if (currency/supports-symbol? currency-code)
+        (get-in currency/currency [(keyword currency-code) :symbol_native])
+        ;; Fall back to using code if symbol isn't not supported on the Metabase frontend
+        currency-code)
+
       "code"
       currency-code
 
@@ -76,6 +82,11 @@
         currency-identifier (currency-identifier format-settings)]
     (condp = (::mb.viz/currency-style format-settings "symbol")
       "symbol"
+      (if (currency/supports-symbol? currency-code)
+        (str "[$" currency-identifier "]" base-string)
+        (str "[$" currency-identifier "] " base-string))
+
+      "symbol_native"
       (if (currency/supports-symbol? currency-code)
         (str "[$" currency-identifier "]" base-string)
         (str "[$" currency-identifier "] " base-string))
