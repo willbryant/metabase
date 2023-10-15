@@ -47,8 +47,8 @@
    :mb-jetty-join          "true"
    ;; other application settings
    :mb-password-complexity "normal"
-   :mb-version-info-url    "http://static.metabase.com/version-info.json"
-   :mb-version-info-ee-url "http://static.metabase.com/version-info-ee.json"
+   :mb-version-info-url    "https://static.metabase.com/version-info.json"
+   :mb-version-info-ee-url "https://static.metabase.com/version-info-ee.json"
    :mb-ns-trace            ""                                             ; comma-separated namespaces to trace
    :max-session-age        "20160"                                        ; session length in minutes (14 days)
    :mb-colorize-logs       (str (not is-windows?))                        ; since PowerShell and cmd.exe don't support ANSI color escape codes or emoji,
@@ -140,7 +140,7 @@
   #_{:clj-kondo/ignore [:discouraged-var]}
   (let [same-site (str/lower-case (config-str :mb-session-cookie-samesite))]
     (when-not (#{"none", "lax", "strict"} same-site)
-      (throw (ex-info "Invalid value for MB_COOKIE_SAMESITE" {:mb-session-cookie-samesite same-site})))
+      (throw (ex-info "Invalid value for MB_SESSION_COOKIE_SAMESITE" {:mb-session-cookie-samesite same-site})))
     (keyword same-site)))
 
 (def ^Keyword mb-session-cookie-samesite

@@ -338,7 +338,11 @@ const parameterValues = handleActions(
 
 const draftParameterValues = handleActions(
   {
-    [INITIALIZE]: { next: () => ({}) },
+    [INITIALIZE]: {
+      next: (state, { payload: { clearCache = true } = {} }) => {
+        return clearCache ? {} : state;
+      },
+    },
     [FETCH_DASHBOARD]: {
       next: (
         state,
@@ -358,7 +362,6 @@ const draftParameterValues = handleActions(
     [REMOVE_PARAMETER]: {
       next: (state, { payload: { id } }) => dissoc(state, id),
     },
-    [RESET]: { next: () => ({}) },
   },
   {},
 );
@@ -383,7 +386,7 @@ const loadingDashCards = handleActions(
     },
     [FETCH_CARD_DATA_PENDING]: {
       next: (state, { payload: { dashcard_id } }) => {
-        const loadingIds = (state.loadingIds ?? []).concat(dashcard_id);
+        const loadingIds = state.loadingIds.concat(dashcard_id);
         return {
           ...state,
           loadingIds,
