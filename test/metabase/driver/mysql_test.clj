@@ -7,7 +7,6 @@
    [java-time.api :as t]
    [metabase.config :as config]
    [metabase.db.metadata-queries :as metadata-queries]
-   [metabase.db.query :as mdb.query]
    [metabase.driver :as driver]
    [metabase.driver.mysql :as mysql]
    [metabase.driver.mysql.ddl :as mysql.ddl]
@@ -113,7 +112,7 @@
             (is (= expected
                    (some-> (sql/format-expr honey-sql)
                            vec
-                           (update 0 #(str/split-lines (mdb.query/format-sql % :mysql))))))))))))
+                           (update 0 #(str/split-lines (driver/prettify-native-form :mysql %))))))))))))
 
 ;; Test how TINYINT(1) columns are interpreted. By default, they should be interpreted as integers, but with the
 ;; correct additional options, we should be able to change that -- see
@@ -162,13 +161,13 @@
   (mt/test-driver :mysql
     (mt/dataset year-db
       (testing "By default YEAR"
-        (is (= #{{:name "year_column", :base_type :type/Date, :semantic_type nil}
+        (is (= #{{:name "year_column", :base_type :type/Integer, :semantic_type nil}
                  {:name "id", :base_type :type/Integer, :semantic_type :type/PK}}
                (db->fields (mt/db)))))
       (let [table  (t2/select-one Table :db_id (u/id (mt/db)))
             fields (t2/select Field :table_id (u/id table) :name "year_column")]
         (testing "Can select from this table"
-          (is (= [[#t "2001-01-01"] [#t "2002-01-01"] [#t "1999-01-01"]]
+          (is (= [[2001] [2002] [1999]]
                  (metadata-queries/table-rows-sample table fields (constantly conj)))))
         (testing "We can fingerprint this table"
           (is (= 1
@@ -501,7 +500,7 @@
                       "  CONVERT(JSON_EXTRACT(`json`.`json_bit`, ?), UNSIGNED)"
                       "ORDER BY"
                       "  CONVERT(JSON_EXTRACT(`json`.`json_bit`, ?), UNSIGNED) ASC"]
-                     (str/split-lines (mdb.query/format-sql (:query compile-res) :mysql))))
+                     (str/split-lines (driver/prettify-native-form :mysql (:query compile-res)))))
               (is (= '("$.\"1234\"" "$.\"1234\"" "$.\"1234\"") (:params compile-res))))))))))
 
 (deftest complicated-json-identifier-test
