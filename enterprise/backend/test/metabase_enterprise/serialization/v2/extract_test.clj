@@ -1,11 +1,14 @@
 (ns ^:mb/once metabase-enterprise.serialization.v2.extract-test
   (:require
+   [cheshire.core :as json]
    [clojure.set :as set]
    [clojure.string :as str]
    [clojure.test :refer :all]
    [java-time.api :as t]
+   [metabase-enterprise.audit-db :as audit-db]
    [metabase-enterprise.serialization.test-util :as ts]
    [metabase-enterprise.serialization.v2.extract :as extract]
+   [metabase.core :as mbc]
    [metabase.models
     :refer [Action
             Card
@@ -575,6 +578,32 @@
                  (->> {:collection-set (#'extract/collection-set-for-user dave-id)}
                       (serdes/extract-all "Dashboard")
                       (by-model "Dashboard")))))))))
+
+(deftest dashboard-card-series-test
+  (mt/with-empty-h2-app-db
+    (ts/with-temp-dpc
+      [:model/Collection {coll-id :id, coll-eid :entity_id} {:name "Some Collection"}
+       :model/Card {c1-id :id, c1-eid :entity_id} {:name "Some Question", :collection_id coll-id}
+       :model/Card {c2-id :id, c2-eid :entity_id} {:name "Series Question A", :collection_id coll-id}
+       :model/Card {c3-id :id, c3-eid :entity_id} {:name "Series Question B", :collection_id coll-id}
+       :model/Dashboard {dash-id :id, dash-eid :entity_id} {:name "Shared Dashboard", :collection_id coll-id}
+       :model/DashboardCard {dc1-id :id, dc1-eid :entity_id} {:card_id c1-id, :dashboard_id dash-id}
+       :model/DashboardCard {dc2-eid :entity_id}             {:card_id c1-id, :dashboard_id dash-id}
+       :model/DashboardCardSeries _ {:card_id c3-id, :dashboardcard_id dc1-id, :position 1}
+       :model/DashboardCardSeries _ {:card_id c2-id, :dashboardcard_id dc1-id, :position 0}]
+      (testing "Inlined dashcards include their series' card entity IDs"
+        (let [ser (serdes/extract-one "Dashboard" {} (t2/select-one Dashboard :id dash-id))]
+          (is (=? {:entity_id dash-eid
+                   :dashcards [{:entity_id dc1-eid, :series [{:card_id c2-eid} {:card_id c3-eid}]}
+                               {:entity_id dc2-eid, :series []}]}
+                  ser))
+
+          (testing "and depend on all referenced cards, including cards from dashboard cards' series"
+            (is (= #{[{:model "Card"       :id c1-eid}]
+                     [{:model "Card"       :id c2-eid}]
+                     [{:model "Card"       :id c3-eid}]
+                     [{:model "Collection" :id coll-eid}]}
+                   (set (serdes/dependencies ser))))))))))
 
 (deftest dimensions-test
   (mt/with-empty-h2-app-db
@@ -1470,14 +1499,23 @@
                                       clickdash-eid :entity_id} {:name          "Dashboard with click behavior"
                                                                  :collection_id coll5-id
                                                                  :creator_id    mark-id}
-                       DashboardCard _                          {:card_id c3-1-id
+                       DashboardCard _                          {:card_id      c3-1-id
                                                                  :dashboard_id clickdash-id
                                                                  :visualization_settings
                                                                  ;; Top-level click behavior for the card.
-                                                                 {:click_behavior {:type "link"
-                                                                                   :linkType "question"
-                                                                                   :targetId c3-2-id
-                                                                                   :parameterMappings {}}}}
+                                                                 (let [dimension  [:dimension [:field "something" {:base-type "type/Text"}]]
+                                                                       mapping-id (json/generate-string dimension)]
+                                                                   {:click_behavior {:type     "link"
+                                                                                     :linkType "question"
+                                                                                     :targetId c3-2-id
+                                                                                     :parameterMapping
+                                                                                     {mapping-id {:id     mapping-id
+                                                                                                  :source {:type "column"
+                                                                                                           :id   "whatever"
+                                                                                                           :name "Just to serialize"}
+                                                                                                  :target {:type      "dimension"
+                                                                                                           :id        mapping-id
+                                                                                                           :dimension dimension}}}}})}
                        ;;; stress-test that exporting various visualization_settings does not break
                        DashboardCard _                          {:card_id c3-1-id
                                                                  :dashboard_id clickdash-id
@@ -1685,3 +1723,14 @@
                (by-model "Collection" ser)))
         (is (= #{ncard-eid}
                (by-model "Card" ser)))))))
+
+(deftest skip-analytics-collections-test
+  (testing "Collections in 'analytics' namespace should not be extracted, see #37453"
+    (mt/with-empty-h2-app-db
+      (mbc/ensure-audit-db-installed!)
+      (testing "sanity check that the audit collection exists"
+        (is (some? (audit-db/default-audit-collection)))
+        (is (some? (audit-db/default-custom-reports-collection))))
+      (let [ser (extract/extract {:no-settings   true
+                                  :no-data-model true})]
+        (is (= #{} (by-model "Collection" ser)))))))

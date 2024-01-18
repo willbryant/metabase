@@ -894,9 +894,22 @@
       [:img {:style (style/style {:display :block :width :100%})
              :src   (:image-src image-bundle)}]]}))
 
+(defn- get-col-by-name
+    [cols col-name]
+    (->> (map-indexed (fn [idx m] [idx m]) cols)
+         (some (fn [[idx col]]
+                 (when (= col-name (:name col))
+                   [idx col])))))
+
 (s/defmethod render :scalar :- common/RenderedPulseCard
   [_chart-type _render-type timezone-id _card _dashcard {:keys [cols rows viz-settings]}]
-  (let [value (format-cell timezone-id (ffirst rows) (first cols) viz-settings)]
+  (let [field-name    (:scalar.field viz-settings)
+        [row-idx col] (or (when field-name
+                            (get-col-by-name cols field-name))
+                          [0 (first cols)])
+        row           (first rows)
+        raw-value     (get row row-idx)
+        value         (format-cell timezone-id raw-value col viz-settings)]
     {:attachments
      nil
 
@@ -993,8 +1006,12 @@
   [_ render-type _timezone-id card _dashcard {:keys [rows cols viz-settings] :as data}]
   (let [[x-axis-rowfn
          y-axis-rowfn] (common/graphing-column-row-fns card data)
-        rows           (map (juxt x-axis-rowfn y-axis-rowfn)
+        funnel-rows    (:funnel.rows viz-settings)
+        raw-rows       (map (juxt x-axis-rowfn y-axis-rowfn)
                             (common/row-preprocess x-axis-rowfn y-axis-rowfn rows))
+        rows           (cond->> raw-rows
+                         funnel-rows (mapv (fn [[idx val]]
+                                             [(get-in funnel-rows [(dec idx) :key]) val])))
         [x-col y-col]  cols
         settings       (as-> (->js-viz x-col y-col viz-settings) jsviz-settings
                          (assoc jsviz-settings :step    {:name   (:display_name x-col)
