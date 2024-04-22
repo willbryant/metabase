@@ -164,7 +164,9 @@ export const moveDnDKitElement = (
       button: 0,
     })
     .wait(200)
-    .trigger("pointermove", 5, 5, {
+    // This initial move needs to be greater than the activation constraint
+    // of the pointer sensor
+    .trigger("pointermove", 20, 20, {
       force: true,
       isPrimary: true,
       button: 0,
@@ -201,5 +203,5 @@ export const undoToastList = () => {
 };
 
 export function dashboardCards() {
-  return cy.get("#Dashboard-Cards-Container");
+  return cy.get("[data-element-id=dashboard-cards-container]");
 }
