@@ -585,7 +585,11 @@
 
     ;; Does the driver support a faster `sync-fields` step by fetching all FK metadata in a single collection?
     ;; if so, `metabase.driver/describe-fields` must be implemented instead of `metabase.driver/describe-table`
-    :describe-fields})
+    :describe-fields
+
+    ;; Does the driver support automatically adding a primary key column to a table for uploads?
+    ;; DEFAULTS TO TRUE
+    :upload-with-auto-pk})
 
 
 (defmulti supports?
@@ -597,8 +601,10 @@
   DEPRECATED — [[database-supports?]] should be used instead. This function will be removed in Metabase version 0.50.0."
   {:added "0.32.0", :arglists '([driver feature]), :deprecated "0.47.0"}
   (fn [driver feature]
-    (when-not (driver-features feature)
-      (throw (Exception. (tru "Invalid driver feature: {0}" feature))))
+    ;; only make sure unqualified keywords are explicitly defined in [[driver-features]].
+    (when (simple-keyword? feature)
+      (when-not (driver-features feature)
+        (throw (Exception. (tru "Invalid driver feature: {0}" feature)))))
     [(dispatch-on-initialized-driver driver) feature])
   :hierarchy #'hierarchy)
 
@@ -624,8 +630,11 @@
     (database-supports? :mongo :set-timezone mongo-db) ; -> true"
   {:arglists '([driver feature database]), :added "0.41.0"}
   (fn [driver feature _database]
-    (when-not (driver-features feature)
-      (throw (Exception. (tru "Invalid driver feature: {0}" feature))))
+    ;; only make sure unqualified keywords are explicitly defined in [[driver-features]].
+    (when (simple-keyword? feature)
+      (when-not (driver-features feature)
+        (throw (ex-info (tru "Invalid driver feature: {0}" feature)
+                        {:feature feature}))))
     [(dispatch-on-initialized-driver driver) feature])
   :hierarchy #'hierarchy)
 
@@ -636,7 +645,8 @@
                               :date-arithmetics                       true
                               :temporal-extract                       true
                               :convert-timezone                       false
-                              :test/jvm-timezone-setting              true}]
+                              :test/jvm-timezone-setting              true
+                              :upload-with-auto-pk                    true}]
   (defmethod database-supports? [::driver feature] [_driver _feature _db] supported?))
 
 (defmulti ^String escape-alias

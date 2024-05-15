@@ -21,6 +21,7 @@
    [metabase.models.humanization :as humanization]
    [metabase.models.interface :as mi]
    [metabase.models.permissions :as perms]
+   [metabase.models.persisted-info :as persisted-info]
    [metabase.models.table :as table]
    [metabase.public-settings :as public-settings]
    [metabase.public-settings.premium-features :as premium-features]
@@ -301,8 +302,7 @@
         col-name+type-pairs (->> rows
                                  (column-types-from-rows settings column-count)
                                  (map vector unique-header))]
-    {:extant-columns    (ordered-map/ordered-map col-name+type-pairs)
-     :generated-columns (ordered-map/ordered-map auto-pk-column-keyword ::auto-incrementing-int-pk)}))
+    (ordered-map/ordered-map col-name+type-pairs)))
 
 
 ;;;; +------------------+
@@ -407,32 +407,43 @@
       auto-pk-indices
       (map (partial remove-indices auto-pk-indices)))))
 
+(defn- columns-with-auto-pk [columns]
+  (merge (ordered-map/ordered-map auto-pk-column-keyword ::auto-incrementing-int-pk) columns))
+
+(defn- create-auto-pk-column? [driver db]
+  (driver/database-supports? driver :upload-with-auto-pk db))
+
 (defn- load-from-csv!
   "Loads a table from a CSV file. If the table already exists, it will throw an error.
    Returns the file size, number of rows, and number of columns."
-  [driver db-id table-name ^File csv-file]
+  [driver db table-name ^File csv-file]
   (with-open [reader (bom/bom-reader csv-file)]
-    (let [[header & rows]         (without-auto-pk-columns (csv/read-csv reader))
-          {:keys [extant-columns generated-columns]} (detect-schema header (sample-rows rows))
-          cols->upload-type       (merge generated-columns extant-columns)
-          col-definitions         (column-definitions driver cols->upload-type)
-          csv-col-names           (keys extant-columns)
-          col-upload-types        (vals extant-columns)
+    (let [auto-pk?                (create-auto-pk-column? driver db)
+          [header & rows]         (cond-> (csv/read-csv reader)
+                                    auto-pk?
+                                    without-auto-pk-columns)
+          cols->upload-type       (detect-schema header (sample-rows rows))
+          col-definitions         (column-definitions driver (cond-> cols->upload-type
+                                                               auto-pk?
+                                                               columns-with-auto-pk))
+          csv-col-names           (keys cols->upload-type)
+          col-upload-types        (vals cols->upload-type)
           parsed-rows             (vec (parse-rows col-upload-types rows))]
       (driver/create-table! driver
-                            db-id
+                            (:id db)
                             table-name
                             col-definitions
-                            :primary-key [auto-pk-column-keyword])
+                            (when auto-pk?
+                              {:primary-key [auto-pk-column-keyword]}))
       (try
-        (driver/insert-into! driver db-id table-name csv-col-names parsed-rows)
+        (driver/insert-into! driver (:id db) table-name csv-col-names parsed-rows)
         {:num-rows          (count rows)
-         :num-columns       (count extant-columns)
-         :generated-columns (count generated-columns)
+         :num-columns       (count cols->upload-type)
+         :generated-columns (if auto-pk? 1 0)
          :size-mb           (/ (.length csv-file)
                                1048576.0)}
         (catch Throwable e
-          (driver/drop-table! driver db-id table-name)
+          (driver/drop-table! driver (:id db) table-name)
           (throw (ex-info (ex-message e) {:status-code 400})))))))
 
 ;;;; +------------------+
@@ -547,15 +558,16 @@
                                    (unique-table-name driver)
                                    (u/lower-case-en))
             schema+table-name (table-identifier {:schema schema-name :name table-name})
-            stats             (load-from-csv! driver (:id database) schema+table-name file)
+            stats             (load-from-csv! driver database schema+table-name file)
             ;; Sync immediately to create the Table and its Fields; the scan is settings-dependent and can be async
             table             (sync-tables/create-or-reactivate-table! database {:name table-name :schema (not-empty schema-name)})
-            _set_is_upload    (t2/update! :model/Table (:id table) {:is_upload true})
+            _set-is-upload    (t2/update! :model/Table (:id table) {:is_upload true})
             _sync             (scan-and-sync-table! database table)
             ;; Set the display_name of the auto-generated primary key column to the same as its name, so that if users
             ;; download results from the table as a CSV and reupload, we'll recognize it as the same column
-            auto-pk-field     (table-id->auto-pk-column (:id table))
-            _                 (t2/update! :model/Field (:id auto-pk-field) {:display_name (:name auto-pk-field)})
+            _                 (when (create-auto-pk-column? driver database)
+                                (let [auto-pk-field (table-id->auto-pk-column (:id table))]
+                                  (t2/update! :model/Field (:id auto-pk-field) {:display_name (:name auto-pk-field)})))
             card              (card/create-card!
                                {:collection_id          collection-id
                                 :dataset                true
@@ -634,18 +646,57 @@
       (let [error-message (extra-and-missing-error-markdown extra missing)]
         (throw (ex-info error-message {:status-code 422}))))))
 
+(defn- mbql? [model]
+  (= "query" (name (:query_type model "query"))))
+
+(defn- no-joins?
+  "Returns true if `query` has no explicit joins in it, otherwise false."
+  [query]
+  ;; TODO while it's unlikely (at the time of writing this) that uploaded tables have FKs, we should probably check
+  ;;      for implicit joins as well.
+  (->> (range (lib/stage-count query))
+       (not-any? (fn [stage-idx]
+                   (lib/joins query stage-idx)))))
+
+(defn- only-table-id
+  "For models that depend on only one table, return its id, otherwise return nil. Doesn't support native queries."
+  [model]
+  ; dataset_query can be empty in tests
+  (when-let [query (some-> model :dataset_query lib/->pMBQL not-empty)]
+    (when (and (mbql? model) (no-joins? query))
+      (lib/source-table-id query))))
+
+(defn- invalidate-cached-models!
+  "Invalidate the model caches for all cards whose `:based_on_upload` value resolves to the given table."
+  [table]
+  ;; NOTE: It is important that this logic is kept in sync with `model-hydrate-based-on-upload`
+  (when-let [model-ids (->> (t2/select [:model/Card :id :dataset_query]
+                                       :table_id (:id table)
+                                       :type     "model"
+                                       :archived false)
+                            (filter (comp #{(:id table)} only-table-id))
+                            (map :id)
+                            seq)]
+    ;; Ideally we would do all the filtering in the query, but this would not allow us to leverage mlv2.
+    (persisted-info/invalidate! {:card_id [:in model-ids]})))
+
 (defn- append-csv!*
   [database table file]
   (with-open [reader (bom/bom-reader file)]
-    (let [[header & rows]    (without-auto-pk-columns (csv/read-csv reader))
-          driver             (driver.u/database->driver database)
+    (let [driver             (driver.u/database->driver database)
+          auto-pk?           (create-auto-pk-column? driver database)
+          [header & rows]    (cond-> (csv/read-csv reader)
+                               auto-pk?
+                               without-auto-pk-columns)
           normed-name->field (m/index-by (comp normalize-column-name :name)
                                          (t2/select :model/Field :table_id (:id table) :active true))
           normed-header      (map normalize-column-name header)
           create-auto-pk?    (and
+                              auto-pk?
                               (driver/create-auto-pk-with-append-csv? driver)
                               (not (contains? normed-name->field auto-pk-column-name)))
-          _                  (check-schema (dissoc normed-name->field auto-pk-column-name) header)
+          normed-name->field (cond-> normed-name->field auto-pk? (dissoc auto-pk-column-name))
+          _                  (check-schema normed-name->field header)
           col-upload-types   (map (comp base-type->upload-type :base_type normed-name->field) normed-header)
           parsed-rows        (parse-rows col-upload-types rows)]
       (try
@@ -663,6 +714,7 @@
       (when create-auto-pk?
         (let [auto-pk-field (table-id->auto-pk-column (:id table))]
           (t2/update! :model/Field (:id auto-pk-field) {:display_name (:name auto-pk-field)})))
+      (invalidate-cached-models! table)
       {:row-count (count parsed-rows)})))
 
 (defn- can-append-error
@@ -718,14 +770,6 @@
               (filter #(can-upload-to-table? (:db %) %))
               (map :id)))))
 
-(defn- no-joins?
-  "Returns true if `query` has no joins in it, otherwise false."
-  [query]
-  (let [all-joins (mapcat (fn [stage]
-                            (lib/joins query stage))
-                          (range (lib/stage-count query)))]
-    (empty? all-joins)))
-
 (mu/defn model-hydrate-based-on-upload
   "Batch hydrates `:based_on_upload` for each item of `models`. Assumes each item of `model` represents a model."
   [models :- [:sequential [:map
@@ -743,15 +787,12 @@
                                    (remove #(false? (:is_upload %)))
                                    (keep :table_id)
                                    set)
-        mbql?                 (fn [model] (= "query" (name (:query_type model "query"))))
         has-uploadable-table? (comp (uploadable-table-ids table-ids) :table_id)]
     (for [model models]
-      (m/assoc-some
-       model
-       :based_on_upload
-       (when-let [query (some-> model :dataset_query lib/->pMBQL not-empty)] ; dataset_query can be empty in tests
-         (when (and (mbql? model) (has-uploadable-table? model) (no-joins? query))
-           (lib/source-table-id query)))))))
+      ;; NOTE: It is important that this logic is kept in sync with `invalidate-cached-models!`
+      ;; If not, it will mean that the user could modify the table via a given model's page without seeing it update.
+      (m/assoc-some model :based_on_upload (when (has-uploadable-table? model)
+                                             (only-table-id model))))))
 
 (mi/define-batched-hydration-method based-on-upload
   :based_on_upload
