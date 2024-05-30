@@ -109,10 +109,10 @@
 
 (defn- default-search-results []
   (sorted-results
-   [(make-result "dashboard test dashboard", :model "dashboard", :bookmark false :creator_id true :creator_common_name "Rasta Toucan")
+   [(make-result "dashboard test dashboard", :model "dashboard", :bookmark false :creator_id true :creator_common_name "Rasta Toucan" :can_write true)
     test-collection
-    (make-result "card test card", :model "card", :bookmark false, :dashboardcard_count 0 :creator_id true :creator_common_name "Rasta Toucan" :dataset_query nil :display "table")
-    (make-result "dataset test dataset", :model "dataset", :bookmark false, :dashboardcard_count 0 :creator_id true :creator_common_name "Rasta Toucan" :dataset_query nil :display "table")
+    (make-result "card test card", :model "card", :bookmark false, :dashboardcard_count 0 :creator_id true :creator_common_name "Rasta Toucan" :dataset_query nil :display "table" :can_write true)
+    (make-result "dataset test dataset", :model "dataset", :bookmark false, :dashboardcard_count 0 :creator_id true :creator_common_name "Rasta Toucan" :dataset_query nil :display "table" :can_write true)
     (make-result "action test action", :model "action", :model_name (:name action-model-params), :model_id true,
                  :database_id true :creator_id true :creator_common_name "Rasta Toucan" :dataset_query (update (mt/query venues) :type name))
     (merge
@@ -138,7 +138,10 @@
 
 (defn- default-results-with-collection []
   (on-search-types #{"dashboard" "pulse" "card" "dataset" "action"}
-                   #(assoc % :collection {:id true, :name (if (= (:model %) "action") nil true) :authority_level nil :type nil})
+                   #(assoc % :collection {:id true,
+                                          :name (if (= (:model %) "action") nil true)
+                                          :authority_level nil
+                                          :type nil})
                    (default-search-results)))
 
 (defn- do-with-search-items [search-string in-root-collection? f]
@@ -360,7 +363,7 @@
   (letfn [(make-card [dashboard-count]
             (make-result (str "dashboard-count " dashboard-count) :dashboardcard_count dashboard-count,
                          :model "card", :bookmark false :creator_id true :creator_common_name "Rasta Toucan"
-                         :dataset_query nil :display "table"))]
+                         :dataset_query nil :display "table" :can_write true))]
     (set [(make-card 5)
           (make-card 3)
           (make-card 0)])))
@@ -412,7 +415,11 @@
         (mt/with-temp [PermissionsGroup           group {}
                        PermissionsGroupMembership _ {:user_id (mt/user->id :rasta), :group_id (u/the-id group)}]
           (perms/grant-permissions! group (perms/collection-read-path {:metabase.models.collection.root/is-root? true}))
-          (is (ordered-subset? (remove (comp #{"collection"} :model) (default-search-results))
+          (is (ordered-subset? (->> (default-search-results)
+                                    (remove (comp #{"collection"} :model))
+                                    (map #(cond-> %
+                                            (contains? #{"dashboard" "card" "dataset"} (:model %))
+                                            (assoc :can_write false))))
                                (search-request-data :rasta :q "test")))))))
 
   (testing "Users without root collection permissions should still see other collections they have access to"
@@ -422,15 +429,18 @@
           (mt/with-temp [PermissionsGroup           group {}
                          PermissionsGroupMembership _ {:user_id (mt/user->id :rasta), :group_id (u/the-id group)}]
             (perms/grant-collection-read-permissions! group (u/the-id collection))
-            (is (= (sorted-results
-                    (reverse ;; This reverse is hokey; it's because the test2 results happen to come first in the API response
-                     (into
-                      (default-results-with-collection)
-                      (map #(merge default-search-row % (table-search-results))
-                           [{:name "metric test2 metric", :description "Lookin' for a blueberry",
-                             :model "metric" :creator_id true :creator_common_name "Rasta Toucan"}
-                            {:name "segment test2 segment", :description "Lookin' for a blueberry",
-                             :model "segment" :creator_id true :creator_common_name "Rasta Toucan"}]))))
+            (is (= (->> (default-results-with-collection)
+                          (map #(cond-> %
+                                  (contains? #{"dashboard" "card" "dataset"} (:model %))
+                                  (assoc :can_write false)))
+                          (concat (map #(merge default-search-row % (table-search-results))
+                                       [{:name "metric test2 metric", :description "Lookin' for a blueberry",
+                                         :model "metric" :creator_id true :creator_common_name "Rasta Toucan"}
+                                        {:name "segment test2 segment", :description "Lookin' for a blueberry",
+                                         :model "segment" :creator_id true :creator_common_name "Rasta Toucan"}]))
+                          ;; This reverse is hokey; it's because the test2 results happen to come first in the API response
+                          reverse
+                          sorted-results)
                    (search-request-data :rasta :q "test"))))))))
 
   (testing (str "Users with root collection permissions should be able to search root collection data long with "
@@ -442,13 +452,15 @@
                          PermissionsGroupMembership _ {:user_id (mt/user->id :rasta) :group_id (u/the-id group)}]
             (perms/grant-permissions! group (perms/collection-read-path {:metabase.models.collection.root/is-root? true}))
             (perms/grant-collection-read-permissions! group collection)
-            (is (ordered-subset? (sorted-results
-                                  (reverse
-                                   (into
-                                    (default-results-with-collection)
-                                    (for [row  (default-search-results)
-                                          :when (not= "collection" (:model row))]
-                                      (update row :name #(str/replace % "test" "test2"))))))
+            (is (ordered-subset? (->> (default-results-with-collection)
+                                      (concat (->> (default-search-results)
+                                                   (remove #(= "collection" (:model %)))
+                                                   (map #(update % :name str/replace "test" "test2"))))
+                                      (map #(cond-> %
+                                              (contains? #{"dashboard" "card" "dataset"} (:model %))
+                                              (assoc :can_write false)))
+                                      reverse
+                                      sorted-results)
                                  (search-request-data :rasta :q "test"))))))))
 
   (testing "Users with access to multiple collections should see results from all collections they have access to"
@@ -473,15 +485,17 @@
           (mt/with-temp [PermissionsGroup           group {}
                          PermissionsGroupMembership _ {:user_id (mt/user->id :rasta) :group_id (u/the-id group)}]
             (perms/grant-collection-read-permissions! group (u/the-id coll-1))
-            (is (= (sorted-results
-                    (reverse
-                     (into
-                      (default-results-with-collection)
-                      (map #(merge default-search-row % (table-search-results))
-                           [{:name "metric test2 metric" :description "Lookin' for a blueberry"
-                             :model "metric" :creator_id true :creator_common_name "Rasta Toucan"}
-                            {:name "segment test2 segment" :description "Lookin' for a blueberry" :model "segment"
-                             :creator_id true :creator_common_name "Rasta Toucan"}]))))
+            (is (= (->> (default-results-with-collection)
+                        (concat (map #(merge default-search-row % (table-search-results))
+                                     [{:name "metric test2 metric" :description "Lookin' for a blueberry"
+                                       :model "metric" :creator_id true :creator_common_name "Rasta Toucan"}
+                                      {:name "segment test2 segment" :description "Lookin' for a blueberry" :model "segment"
+                                       :creator_id true :creator_common_name "Rasta Toucan"}]))
+                        (map #(cond-> %
+                                (contains? #{"dashboard" "card" "dataset"} (:model %))
+                                (assoc :can_write false)))
+                        reverse
+                        sorted-results)
                    (search-request-data :rasta :q "test"))))))))
 
   (testing "Metrics on tables for which the user does not have access to should not show up in results"
@@ -899,6 +913,7 @@
                                                 :archived?          false
                                                 :models             search.config/all-models
                                                 :current-user-perms #{"/"}
+                                                :model-ancestors?   false
                                                 :limit-int          100}))]
           ;; warm it up, in case the DB call depends on the order of test execution and it needs to
           ;; do some initialization
@@ -1638,3 +1653,43 @@
              (->> (mt/user-http-request :lucky :get 200 "search" :archived true :q "test")
                   :data
                   (map :name)))))))
+
+(deftest model-ancestors-gets-ancestor-collections
+  (testing "Collection names are correct"
+    (mt/with-temp [Collection {top-col-id :id} {:name "top level col" :location "/"}
+                   Collection {mid-col-id :id} {:name "middle level col" :location (str "/" top-col-id "/")}
+                   Card {leaf-card-id :id} {:type "model" :collection_id mid-col-id :name "leaf model"}
+                   Card {top-card-id :id} {:type "model" :collection_id top-col-id :name "top model"}]
+      (is (= #{[leaf-card-id [{:name "top level col" :id top-col-id}]]
+               [top-card-id []]}
+             (->> (mt/user-http-request :rasta :get 200 "search" :model_ancestors true :q "model" :models ["dataset"])
+                  :data
+                  (map (juxt :id #(get-in % [:collection :effective_ancestors])))
+                  (into #{}))))))
+  (testing "Models not in a collection work correctly"
+    (mt/with-temp [Card {card-id :id} {:type "model"
+                                       :name "model"
+                                       :collection_id nil}]
+      (is (= #{[card-id []]}
+             (->> (mt/user-http-request :rasta :get 200 "search" :model_ancestors true :q "model" :models ["dataset"])
+                  :data
+                  (map (juxt :id #(get-in % [:collection :effective_ancestors])))
+                  (into #{}))))))
+  (testing "Non-models don't get collection_ancestors"
+    (mt/with-temp [Card _ {:name "question"
+                           :collection_id nil}]
+      (is (not (contains? (->> (mt/user-http-request :rasta :get 200 "search" :model_ancestors true :q "question" :models ["dataset" "card"])
+                               :data
+                               (filter #(= (:name %) "question"))
+                               first
+                               :collection)
+                          :effective_ancestors)))))
+  (testing "If `model_parents` is not passed, it doesn't get populated"
+    (mt/with-temp [Collection {top-col-id :id} {:name "top level col" :location "/"}
+                   Collection {mid-col-id :id} {:name "middle level col" :location (str "/" top-col-id "/")}
+                   Card _ {:type "model" :collection_id mid-col-id :name "leaf model"}
+                   Card _ {:type "model" :collection_id top-col-id :name "top model"}]
+      (is (= [nil nil]
+             (->> (mt/user-http-request :rasta :get 200 "search" :model_ancestors false :q "model" :models ["dataset"])
+                  :data
+                  (map #(get-in % [:collection :effective_ancestors]))))))))
