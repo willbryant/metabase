@@ -117,7 +117,7 @@ export const PLUGIN_ADMIN_PERMISSIONS_TABLE_FIELDS_POST_ACTION = {
 export const PLUGIN_DATA_PERMISSIONS: {
   permissionsPayloadExtraSelectors: ((
     state: State,
-  ) => Record<string, unknown>)[];
+  ) => [Record<string, undefined | { group_id: string }[]>, string[]])[];
   hasChanges: ((state: State) => boolean)[];
   shouldRestrictNativeQueryPermissions: (
     permissions: GroupsPermissions,
@@ -444,6 +444,7 @@ export const PLUGIN_MODEL_PERSISTENCE = {
 
 export const PLUGIN_EMBEDDING = {
   isEnabled: () => false,
+  isInteractiveEmbeddingEnabled: (_state: State) => false,
 };
 
 export const PLUGIN_CONTENT_VERIFICATION = {

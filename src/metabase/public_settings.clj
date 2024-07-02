@@ -261,9 +261,9 @@
   :audit      :getter)
 
 (defsetting enable-query-caching
-  (deferred-tru "Enabling caching will save the results of queries that take a long time to run.")
+  (deferred-tru "Allow caching results of queries that take a long time to run.")
   :type       :boolean
-  :default    false
+  :default    true
   :visibility :authenticated
   :audit      :getter)
 
@@ -923,5 +923,5 @@ See [fonts](../configuring-metabase/fonts.md).")
   (deferred-tru "SQL Parsing is disabled")
   :visibility :internal
   :export?    false
-  :default    true
+  :default    false
   :type       :boolean)

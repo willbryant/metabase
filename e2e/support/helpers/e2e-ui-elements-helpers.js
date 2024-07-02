@@ -152,6 +152,10 @@ export const queryBuilderHeader = () => {
   return cy.findByTestId("qb-header");
 };
 
+export const queryBuilderFooter = () => {
+  return cy.findByTestId("view-footer");
+};
+
 export const closeQuestionActions = () => {
   queryBuilderHeader().click();
 };
@@ -227,6 +231,20 @@ export const undoToastList = () => {
 
 export function dashboardCards() {
   return cy.get("[data-element-id=dashboard-cards-container]");
+}
+
+export function tableInteractive() {
+  return cy.findByTestId("TableInteractive-root");
+}
+
+export function tableHeaderClick(headerString) {
+  tableInteractive().within(() => {
+    cy.findByTextEnsureVisible(headerString).trigger("mousedown");
+  });
+
+  tableInteractive().within(() => {
+    cy.findByTextEnsureVisible(headerString).trigger("mouseup");
+  });
 }
 
 /**

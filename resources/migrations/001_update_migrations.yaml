@@ -5751,6 +5751,9 @@ databaseChangeLog:
       id: v49.2024-03-26T20:27:58
       author: noahmoss
       comment: Added 0.46.0 - Delete the truncate audit log task (renamed to truncate audit tables)
+      # Apparently this migration can hang when connection pool is small (#44528). It's also not needed
+      # as of v50 due to #42383 so let's skip it.
+      ignore: true
       changes:
         - customChange:
             class: "metabase.db.custom_migrations.DeleteTruncateAuditLogTask"
@@ -7562,6 +7565,7 @@ databaseChangeLog:
             tableName: task_history
             columnDataType: ${timestamp_type}
             columnName: ended_at
+      rollback: # we can't reliably add back the constraint while downgrading
 
   - changeSet:
       id: v50.2024-05-08T09:00:04
@@ -7572,6 +7576,7 @@ databaseChangeLog:
             tableName: task_history
             columnDataType: int
             columnName: duration
+      rollback: # we can't reliably add back the constraint while downgrading
 
   - changeSet:
       id: v50.2024-05-08T09:00:05
@@ -7763,6 +7768,34 @@ databaseChangeLog:
             path: custom_sql/fill_cache_config_root_fix.my.sql
             relativeToChangelogFile: true
       rollback: # no rollback necessary here too
+
+  - changeSet:
+      id: v50.2024-06-20T13:21:30
+      author: noahmoss
+      comment: 'Drop permission_id column on sandboxes table to fix down migrations'
+      changes:
+        - dropColumn:
+            tableName: sandboxes
+            columnName: permission_id
+      rollback:
+        - addColumn:
+            tableName: sandboxes
+            columns:
+              - column:
+                  name: permission_id
+                  type: int
+                  remarks: 'The ID of the corresponding permissions path for this sandbox (deprecated)'
+                  constraints:
+                    nullable: true
+                  defaultValue: null
+
+  - changeSet:
+      id: v50.2024-06-28T12:35:50
+      author: piranha
+      comment: 'Clean databasechangelog table of migration that was once deleted'
+      changes:
+        - sql: "DELETE FROM ${databasechangelog.name} WHERE id = 'v50.2024-04-12T12:33:09'"
+      rollback: # nothing to do here
 
   # >>>>>>>>>> DO NOT ADD NEW MIGRATIONS BELOW THIS LINE! ADD THEM ABOVE <<<<<<<<<<
 
