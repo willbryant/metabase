@@ -1,54 +1,54 @@
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
-  ORDERS_DASHBOARD_ID,
-  ORDERS_DASHBOARD_DASHCARD_ID,
-  ORDERS_QUESTION_ID,
-  ORDERS_COUNT_QUESTION_ID,
-  ORDERS_BY_YEAR_QUESTION_ID,
   ADMIN_PERSONAL_COLLECTION_ID,
   NORMAL_PERSONAL_COLLECTION_ID,
+  ORDERS_BY_YEAR_QUESTION_ID,
+  ORDERS_COUNT_QUESTION_ID,
+  ORDERS_DASHBOARD_DASHCARD_ID,
+  ORDERS_DASHBOARD_ID,
+  ORDERS_QUESTION_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
-  restore,
-  saveDashboard,
-  openQuestionsSidebar,
-  undo,
-  dashboardCards,
-  sidebar,
-  visitDashboardAndCreateTab,
-  describeWithSnowplow,
-  resetSnowplow,
-  expectNoBadSnowplowEvents,
-  visitDashboard,
-  editDashboard,
+  addHeadingWhileEditing,
+  addLinkWhileEditing,
+  createDashboardWithTabs,
   createNewTab,
-  expectGoodSnowplowEvents,
-  enableTracking,
+  dashboardCards,
+  dashboardGrid,
   deleteTab,
-  visitCollection,
-  main,
+  describeWithSnowplow,
+  duplicateTab,
+  editDashboard,
+  enableTracking,
+  expectGoodSnowplowEvent,
+  expectGoodSnowplowEvents,
+  expectNoBadSnowplowEvents,
+  filterWidget,
   getDashboardCard,
   getDashboardCards,
-  getTextCardDetails,
   getHeadingCardDetails,
   getLinkCardDetails,
-  updateDashboardCards,
+  getTextCardDetails,
   goToTab,
-  moveDashCardToTab,
-  addLinkWhileEditing,
-  expectGoodSnowplowEvent,
-  selectDashboardFilter,
-  filterWidget,
-  popover,
-  createDashboardWithTabs,
-  dashboardGrid,
+  main,
   modal,
-  addHeadingWhileEditing,
-  setFilter,
+  moveDashCardToTab,
+  openQuestionsSidebar,
   openStaticEmbeddingModal,
+  popover,
   publishChanges,
+  resetSnowplow,
+  restore,
+  saveDashboard,
+  selectDashboardFilter,
+  setFilter,
+  sidebar,
+  undo,
+  updateDashboardCards,
+  visitCollection,
+  visitDashboard,
+  visitDashboardAndCreateTab,
   visitIframe,
-  duplicateTab,
 } from "e2e/support/helpers";
 import { createMockDashboardCard } from "metabase-types/api/mocks";
 
@@ -92,10 +92,22 @@ const TAB_2 = {
   name: "Tab 2",
 };
 
+const changeSynchronousBatchUpdateSetting = value => {
+  cy.request("PUT", "/api/setting/synchronous-batch-updates", {
+    value: value,
+  });
+};
+
 describe("scenarios > dashboard > tabs", () => {
   beforeEach(() => {
     restore();
     cy.signInAsAdmin();
+    changeSynchronousBatchUpdateSetting(true);
+  });
+
+  afterEach(() => {
+    cy.signInAsAdmin();
+    changeSynchronousBatchUpdateSetting(false);
   });
 
   it("should only display cards on the selected tab", () => {
@@ -456,12 +468,10 @@ describe("scenarios > dashboard > tabs", () => {
     };
 
     firstQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0);
+      expect(r.view_count).to.equal(1);
     });
     secondQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0);
+      expect(r.view_count).to.equal(1);
     });
 
     // Visit first tab and confirm only first card was queried
@@ -471,12 +481,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@secondTabQuerySpy").should("not.have.been.called");
     cy.wait("@firstTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 3 = 1 (previously) + 1 (firstQuestion) + 1 (firstTabQuery)
+        expect(r.view_count).to.equal(3); // 1 (previously) + 1 (firstQuestion) + 1 (firstTabQuery)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 2 = 1 (previously) + 1 (secondQuestion)
+        expect(r.view_count).to.equal(2); // 1 (previously) + 1 (secondQuestion)
       });
     });
 
@@ -486,12 +494,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@firstTabQuerySpy").should("have.been.calledOnce");
     cy.wait("@secondTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 4 = 3 (previously) + 1 (firstQuestion)
+        expect(r.view_count).to.equal(4); // 3 (previously) + 1 (firstQuestion)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 4 = 2 (previously) + 1 (secondQuestion) + 1 (secondTabQuery)
+        expect(r.view_count).to.equal(4); // 2 (previously) + 1 (secondQuestion) + 1 (secondTabQuery)
       });
     });
 
@@ -502,12 +508,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@secondTabQuerySpy").should("have.been.calledOnce");
 
     firstQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0); // 5 = 4 (previously) + 1 (firstQuestion)
+      expect(r.view_count).to.equal(5); // 4 (previously) + 1 (firstQuestion)
     });
     secondQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0); // 5 = 4 (previously) + 1 (secondQuestion)
+      expect(r.view_count).to.equal(5); // 4 (previously) + 1 (secondQuestion)
     });
 
     // Go to public dashboard
@@ -537,12 +541,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@publicSecondTabQuerySpy").should("not.have.been.called");
     cy.wait("@publicFirstTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 7 = 5 (previously) + 1 (firstQuestion) + 1 (publicFirstTabQuery)
+        expect(r.view_count).to.equal(7); // 5 (previously) + 1 (firstQuestion) + 1 (publicFirstTabQuery)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 6 = 5 (previously) + 1 (secondQuestion)
+        expect(r.view_count).to.equal(6); // 5 (previously) + 1 (secondQuestion)
       });
     });
 
@@ -552,12 +554,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@publicFirstTabQuerySpy").should("have.been.calledOnce");
     cy.wait("@publicSecondTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 8 = 7 (previously) + 1 (firstQuestion)
+        expect(r.view_count).to.equal(8); // 7 (previously) + 1 (firstQuestion)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 8 = 6 (previously) + 1 (secondQuestion) + 1 (publicSecondTabQuery)
+        expect(r.view_count).to.equal(8); // 6 (previously) + 1 (secondQuestion) + 1 (publicSecondTabQuery)
       });
     });
 
@@ -567,12 +567,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@publicSecondTabQuerySpy").should("have.been.calledOnce");
     cy.wait("@publicFirstTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 10 = 8 (previously) + 1 (firstQuestion) + 1 (publicFirstTabQuery)
+        expect(r.view_count).to.equal(10); // 8 (previously) + 1 (firstQuestion) + 1 (publicFirstTabQuery)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 9 = 8 (previously) + 1 (secondQuestion)
+        expect(r.view_count).to.equal(9); // 8 (previously) + 1 (secondQuestion)
       });
     });
   });
@@ -608,22 +606,20 @@ describe("scenarios > dashboard > tabs", () => {
     };
 
     firstQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0); // 1 (firstQuestion)
+      expect(r.view_count).to.equal(1); // 1 (firstQuestion)
     });
     secondQuestion().then(r => {
-      // Disable view_count updates to handle perf issues (for now) (#44359)
-      expect(r.view_count).to.equal(0); // 1 (secondQuestion)
+      expect(r.view_count).to.equal(1); // 1 (secondQuestion)
     });
 
     cy.intercept(
       "GET",
-      `/api/embed/dashboard/*/dashcard/*/card/${ORDERS_QUESTION_ID}`,
+      `/api/embed/dashboard/*/dashcard/*/card/${ORDERS_QUESTION_ID}*`,
       cy.spy().as("firstTabQuerySpy"),
     ).as("firstTabQuery");
     cy.intercept(
       "GET",
-      `/api/embed/dashboard/*/dashcard/*/card/${ORDERS_COUNT_QUESTION_ID}`,
+      `/api/embed/dashboard/*/dashcard/*/card/${ORDERS_COUNT_QUESTION_ID}*`,
       cy.spy().as("secondTabQuerySpy"),
     ).as("secondTabQuery");
 
@@ -641,12 +637,10 @@ describe("scenarios > dashboard > tabs", () => {
 
     cy.wait("@firstTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 3 = 1 (previously) + 1 (firstQuestion) + 1 (first tab query)
+        expect(r.view_count).to.equal(3); // 1 (previously) + 1 (firstQuestion) + 1 (first tab query)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 2 = 1 (previously) + 1 (secondQuestion)
+        expect(r.view_count).to.equal(2); // 1 (previously) + 1 (secondQuestion)
       });
     });
 
@@ -655,12 +649,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@firstTabQuerySpy").should("have.been.calledOnce");
     cy.wait("@secondTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 4 = 3 (previously) + 1 (firstQuestion)
+        expect(r.view_count).to.equal(4); // 3 (previously) + 1 (firstQuestion)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 4 = 2 (previously) + 1 (secondQuestion) + 1 (second tab query)
+        expect(r.view_count).to.equal(4); // 2 (previously) + 1 (secondQuestion) + 1 (second tab query)
       });
     });
 
@@ -670,12 +662,10 @@ describe("scenarios > dashboard > tabs", () => {
     cy.get("@secondTabQuerySpy").should("have.been.calledOnce");
     cy.wait("@firstTabQuery").then(r => {
       firstQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 6 = 4 (previously) + 1 (firstQuestion) + 1 (first tab query)
+        expect(r.view_count).to.equal(6); // 4 (previously) + 1 (firstQuestion) + 1 (first tab query)
       });
       secondQuestion().then(r => {
-        // Disable view_count updates to handle perf issues (for now) (#44359)
-        expect(r.view_count).to.equal(0); // 5 = 4 (previously) + 1 (secondQuestion)
+        expect(r.view_count).to.equal(5); // 4 (previously) + 1 (secondQuestion)
       });
     });
   });
@@ -710,7 +700,7 @@ describe("scenarios > dashboard > tabs", () => {
 
     // Loader in the 2nd tab
     getDashboardCard(0).within(() => {
-      cy.findByTestId("loading-spinner").should("exist");
+      cy.findByTestId("loading-indicator").should("exist");
       cy.wait("@saveCard");
       cy.findAllByTestId("table-row").should("exist");
     });
@@ -718,7 +708,7 @@ describe("scenarios > dashboard > tabs", () => {
     // Loader in the 1st tab
     goToTab("Tab 1");
     getDashboardCard(0).within(() => {
-      cy.findByTestId("loading-spinner").should("exist");
+      cy.findByTestId("loading-indicator").should("exist");
       cy.wait("@saveCard");
       cy.findAllByTestId("table-row").should("exist");
     });

@@ -527,9 +527,7 @@ export const getTitleForColumn = (column, series, settings) => {
   }
 };
 
-export const buildTableColumnSettings = ({
-  getIsColumnVisible = col => col.visibility_type !== "details-only",
-} = {}) => ({
+export const tableColumnSettings = {
   // NOTE: table column settings may be identified by fieldRef (possible not normalized) or column name:
   //   { name: "COLUMN_NAME", enabled: true }
   //   { fieldRef: ["field", 2, {"source-field": 1}], enabled: true }
@@ -554,7 +552,7 @@ export const buildTableColumnSettings = ({
           .filter((_, columnIndex) => settingIndexes[columnIndex] < 0)
           .map(column => ({
             name: column.name,
-            enabled: getIsColumnVisible(column),
+            enabled: true,
           })),
       ];
     },
@@ -571,4 +569,4 @@ export const buildTableColumnSettings = ({
       };
     },
   },
-});
+};

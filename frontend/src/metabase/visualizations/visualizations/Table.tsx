@@ -12,10 +12,10 @@ import {
   isFormattable,
 } from "metabase/visualizations/components/settings/ChartSettingsTableFormatting";
 import {
-  columnSettings,
-  buildTableColumnSettings,
-  getTitleForColumn,
   isPivoted as _isPivoted,
+  columnSettings,
+  getTitleForColumn,
+  tableColumnSettings,
 } from "metabase/visualizations/lib/settings/column";
 import { getOptionFromColumn } from "metabase/visualizations/lib/settings/utils";
 import { makeCellBackgroundGetter } from "metabase/visualizations/lib/table_format";
@@ -29,13 +29,13 @@ import Question from "metabase-lib/v1/Question";
 import { isNative } from "metabase-lib/v1/queries/utils/card";
 import { findColumnIndexesForColumnSettings } from "metabase-lib/v1/queries/utils/dataset";
 import {
-  isMetric,
+  isAvatarURL,
   isDimension,
-  isNumber,
-  isURL,
   isEmail,
   isImageURL,
-  isAvatarURL,
+  isMetric,
+  isNumber,
+  isURL,
 } from "metabase-lib/v1/types/utils/isa";
 import type {
   DatasetColumn,
@@ -152,7 +152,7 @@ class Table extends Component<TableProps, TableState> {
       readDependencies: ["table.pivot", "table.pivot_column"],
       persistDefault: true,
     },
-    ...buildTableColumnSettings(),
+    ...tableColumnSettings,
     "table.column_widths": {},
     [DataGrid.COLUMN_FORMATTING_SETTING]: {
       section: t`Conditional Formatting`,
@@ -345,10 +345,14 @@ class Table extends Component<TableProps, TableState> {
       const columnSettings = settings["table.columns"] ?? [];
       const columnIndexes = findColumnIndexesForColumnSettings(
         cols,
-        this.props.isShowingDetailsOnlyColumns
-          ? columnSettings
-          : columnSettings.filter(({ enabled }) => enabled),
-      ).filter(columnIndex => columnIndex >= 0);
+        columnSettings,
+      ).filter(
+        (columnIndex, settingIndex) =>
+          columnIndex >= 0 &&
+          (this.props.isShowingDetailsOnlyColumns ||
+            (cols[columnIndex].visibility_type !== "details-only" &&
+              columnSettings[settingIndex].enabled)),
+      );
 
       this.setState({
         data: {

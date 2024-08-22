@@ -30,17 +30,17 @@ import {
   getCard,
   getIsResultDirty,
   getOriginalQuestion,
-  getQuestion,
-  isBasedOnExistingQuestion,
   getParameters,
+  getQuestion,
   getSubmittableQuestion,
+  isBasedOnExistingQuestion,
 } from "../../selectors";
 import { updateUrl } from "../navigation";
 import { zoomInRow } from "../object-detail";
 import { clearQueryResult, runQuestionQuery } from "../querying";
 import { onCloseSidebars } from "../ui";
 
-import { SOFT_RELOAD_CARD, API_UPDATE_QUESTION } from "./types";
+import { API_UPDATE_QUESTION, SOFT_RELOAD_CARD } from "./types";
 import { updateQuestion } from "./updateQuestion";
 
 export const RESET_QB = "metabase/qb/RESET_QB";
@@ -224,11 +224,12 @@ export const apiCreateQuestion = question => {
 
     dispatch({ type: API_CREATE_QUESTION, payload: card });
 
-    const isModel = question.type() === "model";
-    const metadataOptions = { reload: isModel };
-    await dispatch(loadMetadataForCard(card, metadataOptions));
+    await dispatch(loadMetadataForCard(card));
 
-    return createdQuestion;
+    const isModel = question.type() === "model";
+    if (isModel) {
+      dispatch(runQuestionQuery());
+    }
   };
 };
 
@@ -280,8 +281,7 @@ export const apiUpdateQuestion = (question, { rerunQuery } = {}) => {
       await dispatch(ModelIndexes.actions.updateModelIndexes(question));
     }
 
-    const metadataOptions = { reload: isModel };
-    await dispatch(loadMetadataForCard(question.card(), metadataOptions));
+    await dispatch(loadMetadataForCard(question.card()));
 
     if (rerunQuery) {
       dispatch(runQuestionQuery());

@@ -3,6 +3,7 @@ import { t } from "ttag";
 import { PLUGIN_COLLECTIONS } from "metabase/plugins";
 import type {
   Collection,
+  CollectionEssentials,
   CollectionId,
   CollectionItem,
 } from "metabase-types/api";
@@ -40,12 +41,6 @@ export function isInstanceAnalyticsCollection(
     PLUGIN_COLLECTIONS.getCollectionType(collection).type ===
       "instance-analytics"
   );
-}
-
-export function getInstanceAnalyticsCustomCollection(
-  collections: Collection[],
-): Collection | null {
-  return PLUGIN_COLLECTIONS.getInstanceAnalyticsCustomCollection(collections);
 }
 
 export function isInstanceAnalyticsCustomCollection(
@@ -208,3 +203,10 @@ export function isValidCollectionId(
   const id = canonicalCollectionId(collectionId);
   return id === null || typeof id === "number";
 }
+
+export const getCollectionName = (collection: CollectionEssentials) => {
+  if (isRootCollection(collection)) {
+    return t`Our analytics`;
+  }
+  return collection?.name || t`Untitled collection`;
+};

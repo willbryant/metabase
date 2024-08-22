@@ -1,13 +1,13 @@
 /* eslint-disable react/prop-types */
 import cx from "classnames";
-import { createRef, Component } from "react";
+import { Component, createRef } from "react";
 import { t } from "ttag";
 
 import Popover from "metabase/components/Popover";
 import CS from "metabase/css/core/index.css";
 import { Icon } from "metabase/ui";
 
-import AlertListPopoverContent from "../AlertListPopoverContent";
+import { AlertListPopoverContent } from "../AlertListPopoverContent";
 
 import { AlertIcon } from "./QuestionAlertWidget.styled";
 

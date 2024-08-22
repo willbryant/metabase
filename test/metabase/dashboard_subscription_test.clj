@@ -805,6 +805,52 @@
               {:text "Card 2 tab-2", :type :text}]
              (@#'metabase.pulse/execute-dashboard {:creator_id (mt/user->id :rasta)} dashboard))))))
 
+(deftest execute-dashboard-with-empty-tabs-test
+  (testing "Dashboard with one tab."
+    (t2.with-temp/with-temp
+      [Dashboard           {dashboard-id :id
+                            :as          dashboard}   {:name "Dashboard"}
+       :model/DashboardTab {}                {:name         "The second tab"
+                                              :position     1
+                                              :dashboard_id dashboard-id}
+       :model/DashboardTab {tab-id-1 :id}    {:name         "The first tab"
+                                              :position     0
+                                              :dashboard_id dashboard-id}
+       DashboardCard       _                 {:dashboard_id           dashboard-id
+                                              :dashboard_tab_id       tab-id-1
+                                              :row                    2
+                                              :visualization_settings {:text "Card 2 tab-1"}}
+       DashboardCard       _                 {:dashboard_id           dashboard-id
+                                              :dashboard_tab_id       tab-id-1
+                                              :row                    1
+                                              :visualization_settings {:text "Card 1 tab-1"}}]
+      (testing "Tab title is omitted (#45123)"
+        (is (= [{:text "Card 1 tab-1", :type :text}
+                {:text "Card 2 tab-1", :type :text}]
+               (@#'metabase.pulse/execute-dashboard {:creator_id (mt/user->id :rasta)} dashboard))))))
+  (testing "Dashboard with multiple tabs"
+    (t2.with-temp/with-temp
+      [Dashboard           {dashboard-id :id
+                            :as          dashboard}   {:name "Dashboard"}
+       :model/DashboardTab {}                {:name         "The second tab"
+                                              :position     1
+                                              :dashboard_id dashboard-id}
+       :model/DashboardTab {tab-id-1 :id}    {:name         "The first tab"
+                                              :position     0
+                                              :dashboard_id dashboard-id}
+       DashboardCard       _                 {:dashboard_id           dashboard-id
+                                              :dashboard_tab_id       tab-id-1
+                                              :row                    2
+                                              :visualization_settings {:text "Card 2 tab-1"}}
+       DashboardCard       _                 {:dashboard_id           dashboard-id
+                                              :dashboard_tab_id       tab-id-1
+                                              :row                    1
+                                              :visualization_settings {:text "Card 1 tab-1"}}]
+      (testing "Tab title is omitted when only 1 tab contains cards."
+        (is (= [{:text "Card 1 tab-1", :type :text}
+                {:text "Card 2 tab-1", :type :text}]
+               (@#'metabase.pulse/execute-dashboard {:creator_id (mt/user->id :rasta)} dashboard)))))))
+
 (deftest render-dashboard-with-tabs-test
   (tests {:pulse     {:skip_if_empty false}
           :dashboard pulse.test-util/test-dashboard}
@@ -945,3 +991,41 @@
     (let [tmp (#'messages/create-temp-file ".tmp")
           {:keys [file-name]} (#'messages/create-result-attachment-map :csv "テストSQL質問" tmp)]
       (is (= "テストSQL質問" (first (str/split file-name #"_")))))))
+
+(deftest multi-series-test
+  (mt/with-temp
+    [:model/Card                {card-1 :id}      {:name          "Source card"
+                                                   :display       "line"
+                                                   :dataset_query (mt/mbql-query orders
+                                                                                 {:aggregation [[:sum $orders.total]]
+                                                                                  :breakout [$orders.created_at]})}
+     :model/Card                {card-2 :id}      {:name          "Serie card"
+                                                   :display       "line"
+                                                   :dataset_query (mt/mbql-query orders
+                                                                                 {:aggregation [[:sum $orders.subtotal]]
+                                                                                  :breakout [$orders.created_at]})}
+     :model/Dashboard           {dash-id :id}     {:name "Aviary KPIs"}
+     :model/DashboardCard       {dash-card-1 :id} {:dashboard_id dash-id
+                                                   :card_id      card-1}
+     :model/DashboardCardSeries _                 {:dashboardcard_id dash-card-1
+                                                   :card_id          card-2
+                                                   :position         0}
+     :model/Pulse               {pulse-id :id}    {:name         "Aviary KPIs"
+                                                   :dashboard_id dash-id}
+     :model/PulseCard            _                {:pulse_id pulse-id
+                                                   :card_id   card-1
+                                                   :position 0}
+     :model/PulseChannel        {pc-id :id}       {:pulse_id pulse-id
+                                                   :channel_type "email"}
+     :model/PulseChannelRecipient _               {:user_id          (pulse.test-util/rasta-id)
+                                                   :pulse_channel_id pc-id}]
+    (testing "Able to send pulse with multi series card without rendering error #46892"
+      (pulse.test-util/email-test-setup
+       (let [error-msg (str @#'body/error-rendered-message)]
+         (metabase.pulse/send-pulse! (t2/select-one :model/Pulse pulse-id))
+         (is (= (rasta-pulse-email {:body [{error-msg false}
+                                           ;; no result
+                                           pulse.test-util/png-attachment
+                                           ;; icon
+                                           pulse.test-util/png-attachment]})
+                (mt/summarize-multipart-email (re-pattern error-msg)))))))))

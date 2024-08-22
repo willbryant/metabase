@@ -1,28 +1,29 @@
 import { USERS } from "e2e/support/cypress_data";
 import {
   ADMIN_PERSONAL_COLLECTION_ID,
-  ORDERS_DASHBOARD_ID,
   ORDERS_BY_YEAR_QUESTION_ID,
+  ORDERS_DASHBOARD_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
-  describeEE,
-  popover,
-  restore,
-  visitDashboard,
-  modal,
+  createDashboard,
+  dashboardGrid,
   dashboardHeader,
-  navigationSidebar,
-  openNavigationSidebar,
+  describeEE,
   describeWithSnowplow,
+  enableTracking,
+  entityPickerModal,
   expectGoodSnowplowEvent,
   expectNoBadSnowplowEvents,
-  resetSnowplow,
-  enableTracking,
   main,
-  undoToast,
+  modal,
+  navigationSidebar,
+  openNavigationSidebar,
+  popover,
+  resetSnowplow,
+  restore,
   setTokenFeatures,
-  entityPickerModal,
-  dashboardGrid,
+  undoToast,
+  visitDashboard,
   visitQuestion,
 } from "e2e/support/helpers";
 
@@ -467,9 +468,7 @@ describe("scenarios > home > custom homepage", () => {
     it("should show the default homepage if the dashboard was archived (#31599)", () => {
       // Archive dashboard
       visitDashboard(ORDERS_DASHBOARD_ID);
-      dashboardHeader().within(() => {
-        cy.findByLabelText("dashboard-menu-button").click();
-      });
+      dashboardHeader().findByLabelText("Move, trash, and more…").click();
       popover().within(() => {
         cy.findByText("Archive").click();
       });
@@ -500,7 +499,7 @@ describe("scenarios > home > custom homepage", () => {
 
       cy.visit("/");
       dashboardGrid()
-        .findAllByTestId("loading-spinner")
+        .findAllByTestId("loading-indicator")
         .should("have.length", 0);
 
       cy.findByTestId("main-logo-link").click().click();
@@ -515,6 +514,22 @@ describe("scenarios > home > custom homepage", () => {
         "equal",
         `/dashboard/${ORDERS_DASHBOARD_ID}`,
       );
+    });
+
+    it("should not load the homepage dashboard when visiting another dashboard directly (metabase#43800)", () => {
+      cy.intercept("GET", "/api/dashboard/*").as("getDashboard");
+      cy.intercept("GET", "/api/dashboard/*/query_metadata*").as(
+        "getDashboardMetadata",
+      );
+
+      const dashboardName = "Test Dashboard";
+      createDashboard({ name: dashboardName }).then(({ body: dashboard }) =>
+        visitDashboard(dashboard.id),
+      );
+
+      dashboardHeader().findByText(dashboardName).should("be.visible");
+      cy.get("@getDashboard.all").should("have.length", 1);
+      cy.get("@getDashboardMetadata.all").should("have.length", 1);
     });
   });
 });

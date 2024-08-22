@@ -2,12 +2,12 @@ import { SAMPLE_DB_ID } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import { ORDERS_BY_YEAR_QUESTION_ID } from "e2e/support/cypress_sample_instance_data";
 import {
-  restore,
-  visitQuestion,
-  rightSidebar,
-  visitQuestionAdhoc,
   echartsIcon,
   popover,
+  restore,
+  rightSidebar,
+  visitQuestion,
+  visitQuestionAdhoc,
 } from "e2e/support/helpers";
 
 const { ORDERS, ORDERS_ID } = SAMPLE_DATABASE;
@@ -285,14 +285,14 @@ describe("scenarios > organization > timelines > question", () => {
         dataset_query: {
           type: "native",
           native: {
-            query: "SELECT ID, CREATED_AT FROM ORDERS",
+            query: "SELECT TOTAL, CREATED_AT FROM ORDERS",
           },
           database: SAMPLE_DB_ID,
         },
         display: "line",
         visualization_settings: {
           "graph.dimensions": ["CREATED_AT"],
-          "graph.metrics": ["ID"],
+          "graph.metrics": ["TOTAL"],
         },
       });
 

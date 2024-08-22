@@ -5,18 +5,18 @@ import type { DatasetColumn } from "metabase-types/api";
 
 import {
   isBoolean,
-  isTime,
-  isTemporal,
   isCoordinate,
-  isStringOrStringLike,
   isNumeric,
+  isStringOrStringLike,
+  isTemporal,
+  isTime,
 } from "./column_types";
 import {
   BOOLEAN_FILTER_OPERATORS,
   COORDINATE_FILTER_OPERATORS,
+  DEFAULT_FILTER_OPERATORS,
   EXCLUDE_DATE_BUCKETS,
   EXCLUDE_DATE_FILTER_OPERATORS,
-  DEFAULT_FILTER_OPERATORS,
   NUMBER_FILTER_OPERATORS,
   RELATIVE_DATE_BUCKETS,
   SPECIFIC_DATE_FILTER_OPERATORS,
@@ -41,6 +41,8 @@ import type {
   ColumnMetadata,
   CoordinateFilterOperatorName,
   CoordinateFilterParts,
+  DefaultFilterOperatorName,
+  DefaultFilterParts,
   ExcludeDateBucketName,
   ExcludeDateFilterOperatorName,
   ExcludeDateFilterParts,
@@ -49,8 +51,6 @@ import type {
   ExpressionOperatorName,
   ExpressionOptions,
   ExpressionParts,
-  DefaultFilterOperatorName,
-  DefaultFilterParts,
   FilterClause,
   FilterOperator,
   FilterParts,
@@ -348,13 +348,12 @@ export function relativeDateFilterClause({
     );
   }
 
-  return expressionClause("between", [
-    expressionClause("+", [
-      columnWithoutBucket,
-      expressionClause("interval", [-offsetValue, offsetBucket]),
-    ]),
-    expressionClause("relative-datetime", [value < 0 ? value : 0, bucket]),
-    expressionClause("relative-datetime", [value > 0 ? value : 0, bucket]),
+  return expressionClause("relative-time-interval", [
+    columnWithoutBucket,
+    value,
+    bucket,
+    offsetValue,
+    offsetBucket,
   ]);
 }
 
@@ -366,7 +365,8 @@ export function relativeDateFilterParts(
   const filterParts = expressionParts(query, stageIndex, filterClause);
   return (
     relativeDateFilterPartsWithoutOffset(filterParts) ??
-    relativeDateFilterPartsWithOffset(filterParts)
+    relativeDateFilterPartsWithOffset(filterParts) ??
+    relativeDateFilterPartsRelativeTimeInterval(filterParts)
   );
 }
 
@@ -811,6 +811,47 @@ function relativeDateFilterPartsWithOffset({
     bucket: startBucket,
     offsetValue: offsetValue * -1,
     offsetBucket,
+    options,
+  };
+}
+
+function relativeDateFilterPartsRelativeTimeInterval({
+  operator,
+  args,
+  options,
+}: ExpressionParts): RelativeDateFilterParts | null {
+  if (operator !== "relative-time-interval" || args.length !== 5) {
+    return null;
+  }
+
+  const [column, value, bucket, offsetValue, offsetBucket] = args;
+
+  if (!isColumnMetadata(column) || !isTemporal(column)) {
+    return null;
+  }
+
+  if (
+    !isNumberLiteral(value) ||
+    !isStringLiteral(bucket) ||
+    !isRelativeDateBucket(bucket)
+  ) {
+    return null;
+  }
+
+  if (
+    !isNumberLiteral(offsetValue) ||
+    !isStringLiteral(offsetBucket) ||
+    !isRelativeDateBucket(offsetBucket)
+  ) {
+    return null;
+  }
+
+  return {
+    column,
+    bucket,
+    value,
+    offsetBucket,
+    offsetValue,
     options,
   };
 }

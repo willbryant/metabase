@@ -1,4 +1,4 @@
-import { t, jt } from "ttag";
+import { jt, t } from "ttag";
 
 const RocketGlobeIllustrationSrc = "app/assets/img/rocket-globe.svg";
 import { useSelector } from "metabase/lib/redux";
@@ -23,7 +23,7 @@ export const UpsellHosting = ({ source }: { source: string }) => {
       source={source}
     >
       {jt`${(
-        <strong>{t`Migrate to Metabase Cloud`}</strong>
+        <strong key="migrate">{t`Migrate to Metabase Cloud`}</strong>
       )} for fast, reliable, and secure deployment.`}
     </UpsellCard>
   );
@@ -46,7 +46,7 @@ export const UpsellHostingUpdates = ({ source }: { source: string }) => {
       source={source}
     >
       {jt`${(
-        <strong>{t`Migrate to Metabase Cloud`}</strong>
+        <strong key="migrate">{t`Migrate to Metabase Cloud`}</strong>
       )} for fast, reliable, and secure deployment.`}
     </UpsellCard>
   );

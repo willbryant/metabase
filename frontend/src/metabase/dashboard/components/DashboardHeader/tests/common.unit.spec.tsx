@@ -2,7 +2,7 @@ import userEvent from "@testing-library/user-event";
 
 import { screen, within } from "__support__/ui";
 
-import { setup, TEST_DASHBOARD, TEST_DASHBOARD_WITH_TABS } from "./setup";
+import { TEST_DASHBOARD, TEST_DASHBOARD_WITH_TABS, setup } from "./setup";
 
 // console.warn = jest.fn();
 // console.error = jest.fn();
@@ -14,7 +14,7 @@ describe("DashboardHeader", () => {
     });
 
     await userEvent.click(
-      await screen.findByLabelText("dashboard-menu-button"),
+      await screen.findByLabelText("Move, trash, and more…"),
     );
     await screen.findByRole("dialog");
 
@@ -30,7 +30,7 @@ describe("DashboardHeader", () => {
     });
 
     await userEvent.click(
-      await screen.findByLabelText("dashboard-menu-button"),
+      await screen.findByLabelText("Move, trash, and more…"),
     );
     await screen.findByRole("dialog");
 

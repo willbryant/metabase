@@ -1,11 +1,12 @@
 import { useCallback } from "react";
 
+import { color } from "metabase/lib/colors";
 import { useDispatch } from "metabase/lib/redux";
 import { addUndo } from "metabase/redux/undo";
 import { CacheConfigApi } from "metabase/services";
 import type { CacheableModel } from "metabase-types/api";
 
-import { resolveSmoothly, isErrorWithMessage } from "../utils";
+import { isErrorWithMessage, resolveSmoothly } from "../utils";
 
 export const useInvalidateTarget = (
   targetId: number | null,
@@ -34,7 +35,7 @@ export const useInvalidateTarget = (
             icon: "warning",
             message: e.data.message,
             toastColor: "error",
-            dismissIconColor: "var(--mb-color-text-white)",
+            dismissIconColor: color("text-white"),
           }),
         );
       }

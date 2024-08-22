@@ -16,7 +16,7 @@
    [metabase.shared.models.visualization-settings :as mb.viz]
    [metabase.types :as types]
    [metabase.util :as u]
-   [metabase.util.i18n :refer [trs tru]]
+   [metabase.util.i18n :refer [deferred-trs trs tru]]
    [metabase.util.malli :as mu]
    [toucan2.core :as t2])
   (:import
@@ -38,6 +38,8 @@
                           :padding     :16px})}
            (trs "There was a problem with this question.")]}))
 
+(def ^:private error-rendered-message (deferred-trs "An error occurred while displaying this card."))
+
 (def ^:private error-rendered-info
   "Default rendered-info map when there is an error displaying a card on the static viz side.
   Is a delay due to the call to `trs`."
@@ -50,7 +52,7 @@
                          {:color       style/color-error
                           :font-weight 700
                           :padding     :16px})}
-           (trs "An error occurred while displaying this card.")]}))
+           error-rendered-message]}))
 
 ;; NOTE: hiccup does not escape content by default so be sure to use "h" to escape any user-controlled content :-/
 
@@ -226,15 +228,16 @@
    timezone-id :- [:maybe :string]
    card
    _dashcard
-   {:keys [rows viz-settings format-rows?] :as data}]
-  (let [[ordered-cols ordered-rows] (order-data data viz-settings)
-        data                        (-> data
+   {:keys [rows viz-settings format-rows?] :as unordered-data}]
+  (let [[ordered-cols ordered-rows] (order-data unordered-data viz-settings)
+        data                        (-> unordered-data
                                         (assoc :rows ordered-rows)
                                         (assoc :cols ordered-cols))
         table-body                  [:div
                                      (table/render-table
-                                      (color/make-color-selector data viz-settings)
-                                      (common/column-titles ordered-cols (::mb.viz/column-settings viz-settings) format-rows?)
+                                      (color/make-color-selector unordered-data viz-settings)
+                                      {:cols-for-color-lookup (mapv :name ordered-cols)
+                                       :col-names             (common/column-titles ordered-cols (::mb.viz/column-settings viz-settings) format-rows?)}
                                       (prep-for-html-rendering timezone-id card data))
                                      (render-truncation-warning (public-settings/attachment-table-row-limit) (count rows))]]
     {:attachments

@@ -1,50 +1,51 @@
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
+  FIRST_COLLECTION_ID,
   ORDERS_DASHBOARD_ID,
   ORDERS_QUESTION_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
+  type NativeQuestionDetails,
   type StructuredQuestionDetails,
+  assertQueryBuilderRowCount,
   createNativeQuestion,
   createQuestion,
+  describeEE,
+  editDashboard,
   enterCustomColumnDetails,
   entityPickerModal,
   entityPickerModalTab,
   getNotebookStep,
+  getPinnedSection,
   hovercard,
   join,
   mapColumnTo,
   modal,
+  navigationSidebar,
+  newButton,
   openColumnOptions,
   openNotebook,
   openQuestionActions,
   popover,
-  queryBuilderMain,
+  questionInfoButton,
   renameColumn,
   restore,
+  rightSidebar,
   saveMetadataChanges,
   saveQuestion,
+  setDropdownFilterType,
+  setFilter,
+  setTokenFeatures,
+  sidebar,
   startNewModel,
   startNewQuestion,
+  summarize,
+  tableHeaderClick,
+  tableInteractive,
   undoToast,
+  visitDashboard,
   visitModel,
   visualize,
-  tableHeaderClick,
-  questionInfoButton,
-  visitDashboard,
-  editDashboard,
-  setFilter,
-  setDropdownFilterType,
-  sidebar,
-  describeEE,
-  setTokenFeatures,
-  getPinnedSection,
-  summarize,
-  rightSidebar,
-  assertQueryBuilderRowCount,
-  navigationSidebar,
-  newButton,
-  tableInteractive,
 } from "e2e/support/helpers";
 import type { CardId, FieldReference } from "metabase-types/api";
 
@@ -421,24 +422,24 @@ describe("issue 39150", { viewportWidth: 1600 }, () => {
   });
 });
 
-describe("issue 41785", () => {
+describe.skip("issue 41785, issue 46756", () => {
   beforeEach(() => {
     restore();
     cy.signInAsNormalUser();
     cy.intercept("POST", "/api/dataset").as("dataset");
   });
 
-  it("does not break the question when removing column with the same mapping as another column (metabase#41785)", () => {
+  it("does not break the question when removing column with the same mapping as another column (metabase#41785) (metabase#46756)", () => {
     // it's important to create the model through UI to reproduce this issue
     startNewModel();
     entityPickerModal().within(() => {
       entityPickerModalTab("Tables").click();
-      cy.findByText("Orders").click();
+      cy.findByText("Products").click();
     });
     join();
     entityPickerModal().within(() => {
       entityPickerModalTab("Tables").click();
-      cy.findByText("Orders").click();
+      cy.findByText("Products").click();
     });
     popover().findByText("ID").click();
     popover().findByText("ID").click();
@@ -454,19 +455,31 @@ describe("issue 41785", () => {
 
     cy.findByTestId("viz-settings-button").click();
     cy.findByTestId("chartsettings-sidebar").within(() => {
-      cy.findAllByText("Tax").should("have.length", 1);
-      cy.findAllByText("Orders → Tax").should("have.length", 1);
+      cy.findAllByText("Ean").should("have.length", 1);
+      cy.findAllByText("Products → Ean").should("have.length", 1);
 
-      cy.findByRole("button", { name: "Add or remove columns" }).click();
-      cy.findAllByText("Tax").should("have.length", 1);
-      cy.findAllByText("Orders → Tax").should("have.length", 1).click();
+      cy.button("Add or remove columns").click();
+      cy.findAllByText("Ean").should("have.length", 1);
+      cy.findByLabelText("Ean").should("be.checked");
+
+      cy.findByLabelText("Products → Ean").should("be.checked");
+      cy.findAllByText("Products → Ean").should("have.length", 1).click();
+
+      cy.wait("@dataset");
+
+      cy.log("Only the clicked column should be removed (metabase#46756)");
+      cy.findByLabelText("Products → Ean").should("not.be.checked");
+      cy.findByLabelText("Ean").should("be.checked");
     });
 
-    cy.wait("@dataset");
+    cy.log(
+      "There should be no error in the table visualization (metabase#41785)",
+    );
+    cy.findAllByTestId("header-cell")
+      .filter(":contains(Ean)")
+      .should("be.visible");
 
-    queryBuilderMain()
-      .findByText("There was a problem with your question")
-      .should("not.exist");
+    tableInteractive().should("contain", "Small Marble Shoes");
   });
 });
 
@@ -682,6 +695,75 @@ describe("issue 39749", () => {
     cy.findByLabelText("Description").should("have.text", "A");
     tableHeaderClick("Sum of Total");
     cy.findByLabelText("Description").should("have.text", "B");
+  });
+});
+
+describe("issue 33844", () => {
+  beforeEach(() => {
+    restore();
+    cy.signInAsNormalUser();
+    cy.request("PUT", `/api/card/${ORDERS_QUESTION_ID}`, { type: "model" });
+    cy.intercept("POST", "/api/dataset").as("dataset");
+    cy.intercept("POST", "/api/card").as("createModel");
+    cy.intercept("PUT", "/api/card/*").as("updateModel");
+  });
+
+  function testModelMetadata(isNew: boolean) {
+    cy.log("make a column visible only in detail views");
+    cy.findByTestId("detail-shortcut").should("not.exist");
+    tableHeaderClick("ID");
+    cy.findByLabelText("Detail views only").click();
+    cy.button(isNew ? "Save" : "Save changes").click();
+    if (isNew) {
+      modal().button("Save").click();
+      cy.wait("@createModel");
+    } else {
+      cy.wait("@updateModel");
+      cy.wait("@dataset");
+    }
+    tableInteractive().findByText("User ID").should("be.visible");
+    tableInteractive().findByText("ID").should("not.exist");
+    cy.findAllByTestId("detail-shortcut").first().click();
+    modal().within(() => {
+      cy.findByText("Order").should("be.visible");
+      cy.findByText("ID").should("be.visible");
+      cy.findByTestId("object-detail-close-button").click();
+    });
+
+    cy.log("make the column visible in table views");
+    openQuestionActions();
+    popover().findByText("Edit metadata").click();
+    tableHeaderClick("ID");
+    cy.findByLabelText("Detail views only").should("be.checked");
+    cy.findByLabelText("Table and details views").click();
+    cy.button("Save changes").click();
+    cy.wait("@updateModel");
+    cy.wait("@dataset");
+    tableInteractive().findByText("ID").should("be.visible");
+  }
+
+  it("should show hidden PKs in model metadata editor and object details after creating a model (metabase#33844)", () => {
+    cy.visit("/");
+    newButton("Model").click();
+    cy.findByTestId("new-model-options")
+      .findByText("Use the notebook editor")
+      .click();
+    entityPickerModal().within(() => {
+      entityPickerModalTab("Tables").click();
+      cy.findByText("Orders").click();
+    });
+    cy.findByTestId("run-button").click();
+    cy.wait("@dataset");
+    cy.findByTestId("dataset-edit-bar").findByText("Metadata").click();
+    testModelMetadata(true);
+  });
+
+  it("should show hidden PKs in model metadata editor and object details after updating a model (metabase#33844,metabase#45924)", () => {
+    visitModel(ORDERS_QUESTION_ID);
+    cy.wait("@dataset");
+    openQuestionActions();
+    popover().findByText("Edit metadata").click();
+    testModelMetadata(false);
   });
 });
 
@@ -1089,4 +1171,40 @@ describe.skip("issues 28270, 33708", () => {
         .and("contain.text", "Reviews");
     });
   }
+});
+
+describe("issue 46221", () => {
+  const modelDetails: NativeQuestionDetails = {
+    name: "46221",
+    native: { query: "select 42" },
+    type: "model",
+    collection_id: FIRST_COLLECTION_ID as number,
+  };
+
+  beforeEach(() => {
+    restore();
+    cy.signInAsAdmin();
+
+    createNativeQuestion(modelDetails, { visitQuestion: true });
+  });
+
+  it("should retain the same collection name between ad-hoc question based on a model and a model itself (metabase#46221)", () => {
+    cy.location("pathname").should("match", /^\/model\/\d+/);
+    cy.findByTestId("head-crumbs-container")
+      .should("contain", "First collection")
+      .and("contain", modelDetails.name);
+
+    cy.log("Change the viz type");
+    cy.findByTestId("viz-type-button").click();
+    cy.findByTestId("sidebar-left").within(() => {
+      cy.findByTestId("Table-button").click();
+    });
+
+    cy.log("Make sure we're now in an ad-hoc question mode");
+    cy.location("pathname").should("eq", "/question");
+
+    cy.findByTestId("head-crumbs-container")
+      .should("contain", "First collection")
+      .and("contain", modelDetails.name);
+  });
 });

@@ -357,13 +357,10 @@
                              :db
                              [:fields [:target :has_field_values] :has_field_values :dimensions :name_field]
                              :segments
-                             :metrics)
-          dbs    (when (seq tables)
-                   (t2/select-pk->fn identity Database :id [:in (into #{} (map :db_id) tables)]))]
+                             :metrics)]
       (for [table tables]
         (-> table
             (m/dissoc-in [:db :details])
-            (assoc-dimension-options (-> table :db_id dbs))
             format-fields-for-response
             fix-schema
             (update :fields #(remove (comp #{:hidden :sensitive} :visibility_type) %)))))))
@@ -619,6 +616,7 @@
   "This helper function exists to make testing the POST /api/table/:id/{action}-csv endpoints easier."
   [options :- [:map
                [:table-id ms/PositiveInt]
+               [:filename :string]
                [:file (ms/InstanceOfClass java.io.File)]
                [:action upload/update-action-schema]]]
   (try
@@ -638,6 +636,7 @@
   [id :as {raw-params :params}]
   {id ms/PositiveInt}
   (update-csv! {:table-id id
+                :filename (get-in raw-params ["file" :filename])
                 :file     (get-in raw-params ["file" :tempfile])
                 :action   ::upload/append}))
 
@@ -646,6 +645,7 @@
   [id :as {raw-params :params}]
   {id ms/PositiveInt}
   (update-csv! {:table-id id
+                :filename (get-in raw-params ["file" :filename])
                 :file     (get-in raw-params ["file" :tempfile])
                 :action   ::upload/replace}))
 

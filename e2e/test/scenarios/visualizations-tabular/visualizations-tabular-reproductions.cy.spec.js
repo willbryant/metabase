@@ -2,32 +2,32 @@ import { SAMPLE_DB_ID } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import { ADMIN_USER_ID } from "e2e/support/cypress_sample_instance_data";
 import {
-  restore,
-  popover,
-  visitQuestion,
   cartesianChartCircle,
-  visitQuestionAdhoc,
-  sidebar,
-  rightSidebar,
-  leftSidebar,
+  createNativeQuestion,
+  createQuestion,
   getDashboardCard,
-  visitDashboard,
-  openOrdersTable,
   getDraggableElements,
+  getNotebookStep,
+  leftSidebar,
+  main,
+  modal,
   moveDnDKitElement,
   openNativeEditor,
-  runNativeQuery,
-  main,
-  createQuestion,
   openNotebook,
-  getNotebookStep,
+  openOrdersTable,
+  popover,
   queryBuilderHeader,
-  modal,
-  withDatabase,
+  restore,
+  rightSidebar,
+  runNativeQuery,
+  sidebar,
   summarize,
-  visualize,
   tableInteractive,
-  createNativeQuestion,
+  visitDashboard,
+  visitQuestion,
+  visitQuestionAdhoc,
+  visualize,
+  withDatabase,
 } from "e2e/support/helpers";
 import { createMetric as apiCreateMetric } from "e2e/support/helpers/e2e-table-metadata-helpers";
 
@@ -400,7 +400,7 @@ describe("#22206 adding and removing columns doesn't duplicate columns", () => {
     cy.signInAsNormalUser();
     openOrdersTable();
 
-    cy.findByTestId("loading-spinner").should("not.exist");
+    cy.findByTestId("loading-indicator").should("not.exist");
   });
 
   it("should not duplicate column in settings when removing and adding it back", () => {
@@ -416,7 +416,7 @@ describe("#22206 adding and removing columns doesn't duplicate columns", () => {
     // rerun query
     cy.findAllByTestId("run-button").first().click();
     cy.wait("@dataset");
-    cy.findByTestId("loading-spinner").should("not.exist");
+    cy.findByTestId("loading-indicator").should("not.exist");
 
     // add column back again
     cy.findByTestId("sidebar-content")
@@ -1087,6 +1087,56 @@ describe("issue 12368", () => {
       cy.button("Add or remove columns").should("be.visible");
       cy.findByText("Pivot column").should("not.exist");
       cy.findByText("Cell column").should("not.exist");
+    });
+  });
+});
+
+describe("issue 32718", () => {
+  const questionDetails = {
+    display: "table",
+    query: {
+      "source-table": PRODUCTS_ID,
+      fields: [
+        ["field", PRODUCTS.ID, { "base-type": "type/BigInteger" }],
+        ["field", PRODUCTS.EAN, { "base-type": "type/Text" }],
+        ["field", PRODUCTS.CATEGORY, { "base-type": "type/Text" }],
+        ["field", PRODUCTS.CREATED_AT, { "base-type": "type/DateTime" }],
+      ],
+      limit: 1,
+    },
+    visualization_settings: {
+      "table.columns": [
+        { name: "ID", enabled: true },
+        { name: "EAN", enabled: false },
+        { name: "CATEGORY", enabled: true },
+        { name: "CREATED_AT", enabled: true },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    restore();
+    cy.signInAsAdmin();
+    cy.request("PUT", `/api/field/${PRODUCTS.CATEGORY}`, {
+      visibility_type: "details-only",
+    });
+  });
+
+  it("should honor visibility_type of the field when the question has viz settings (metabase#32718)", () => {
+    createQuestion(questionDetails, { visitQuestion: true });
+    tableInteractive().within(() => {
+      cy.findByText("ID").should("be.visible");
+      cy.findByText("Ean").should("not.exist");
+      cy.findByText("Category").should("not.exist");
+      cy.findByText("Created At").should("be.visible");
+    });
+    cy.findByTestId("viz-type-button").click();
+    cy.findByTestId("Detail-button").click();
+    cy.findByTestId("object-detail").within(() => {
+      cy.findByText("ID").should("be.visible");
+      cy.findByText("Ean").should("not.exist");
+      cy.findByText("Category").should("be.visible");
+      cy.findByText("Created At").should("be.visible");
     });
   });
 });

@@ -4,30 +4,33 @@ import _ from "underscore";
 import { SAMPLE_DB_ID, USERS, USER_GROUPS } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
-  ORDERS_QUESTION_ID,
-  FIRST_COLLECTION_ID,
-  SECOND_COLLECTION_ID,
-  THIRD_COLLECTION_ID,
   ADMIN_PERSONAL_COLLECTION_ID,
   ALL_USERS_GROUP_ID,
+  FIRST_COLLECTION_ID,
+  ORDERS_QUESTION_ID,
+  SECOND_COLLECTION_ID,
+  THIRD_COLLECTION_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
-  restore,
-  popover,
-  openOrdersTable,
-  navigationSidebar,
-  openNavigationSidebar,
   closeNavigationSidebar,
-  visitCollection,
+  createCollection,
+  createQuestion,
   dragAndDrop,
-  openUnpinnedItemMenu,
+  entityPickerModal,
+  entityPickerModalItem,
+  entityPickerModalTab,
   getPinnedSection,
   moveOpenedCollectionTo,
-  pickEntity,
-  entityPickerModal,
+  navigationSidebar,
+  openCollectionItemMenu,
   openCollectionMenu,
-  createQuestion,
-  entityPickerModalItem,
+  openNavigationSidebar,
+  openOrdersTable,
+  openUnpinnedItemMenu,
+  pickEntity,
+  popover,
+  restore,
+  visitCollection,
 } from "e2e/support/helpers";
 
 import { displaySidebarChildOf } from "./helpers/e2e-collections-sidebar.js";
@@ -502,7 +505,7 @@ describe("scenarios > collection defaults", () => {
       // we need to do this manually because we need to await the correct number of api requests to keep this from flaking
 
       entityPickerModal().within(() => {
-        cy.findByTestId("loading-spinner").should("not.exist");
+        cy.findByTestId("loading-indicator").should("not.exist");
         cy.findByRole("tab", { name: /Collections/ }).click();
         cy.wait([
           "@getCollectionItems",
@@ -702,7 +705,6 @@ describe("scenarios > collection defaults", () => {
 
           entityPickerModal().within(() => {
             cy.log("should disable all moving collections");
-            cy.findByRole("tab", { name: /Collections/ }).click();
             findPickerItem("First collection").should("have.attr", "disabled");
             findPickerItem("Another collection").should(
               "have.attr",
@@ -713,6 +715,72 @@ describe("scenarios > collection defaults", () => {
               "data-active",
               "true",
             );
+          });
+        });
+
+        it("moving collections should disable moving into any of the moving collections in recents or search (metabase#45248)", () => {
+          createCollection({ name: "Outer collection 1" }).then(
+            ({ body: { id: parentCollectionId } }) => {
+              cy.wrap(parentCollectionId).as("outerCollectionId");
+              createCollection({
+                name: "Inner collection 1",
+                parent_id: parentCollectionId,
+              }).then(({ body: { id: innerCollectionId } }) => {
+                cy.wrap(innerCollectionId).as("innerCollectionId");
+              });
+              createCollection({
+                name: "Inner collection 2",
+                parent_id: parentCollectionId,
+              });
+            },
+          );
+          createCollection({ name: "Outer collection 2" });
+
+          // modify the inner collection so that it shows up in recents
+          cy.get("@innerCollectionId").then(innerCollectionId => {
+            cy.request("PUT", `/api/collection/${innerCollectionId}`, {
+              name: "Inner collection 1 - modified",
+            });
+          });
+          cy.visit("/collection/root");
+
+          cy.log("single move");
+
+          cy.findByTestId("collection-table").within(() => {
+            openCollectionItemMenu("Outer collection 1");
+          });
+
+          popover().findByText("Move").click();
+
+          entityPickerModal().within(() => {
+            entityPickerModalTab("Recents").should(
+              "have.attr",
+              "data-active",
+              "true",
+            );
+
+            cy.findByText(/inner collection/).should("not.exist");
+
+            cy.button("Cancel").click();
+          });
+
+          cy.log("bulk move");
+
+          cy.findByTestId("collection-table").within(() => {
+            selectItemUsingCheckbox("Orders");
+            selectItemUsingCheckbox("Outer collection 1");
+          });
+
+          cy.findByTestId("toast-card").button("Move").click();
+
+          entityPickerModal().within(() => {
+            entityPickerModalTab("Recents").should(
+              "have.attr",
+              "data-active",
+              "true",
+            );
+
+            cy.findByText(/inner collection/).should("not.exist");
           });
         });
       });

@@ -1,6 +1,6 @@
 import cx from "classnames";
 import type { Location } from "history";
-import { type MouseEvent, useState, Fragment } from "react";
+import { Fragment, type MouseEvent, useState } from "react";
 import { useMount } from "react-use";
 import { msgid, ngettext, t } from "ttag";
 
@@ -22,7 +22,9 @@ import type { NewDashCardOpts } from "metabase/dashboard/actions";
 import {
   addActionToDashboard,
   addSectionToDashboard,
+  applyDraftParameterValues,
   cancelEditingDashboard,
+  resetParameters,
   toggleSidebar,
 } from "metabase/dashboard/actions";
 import { trackExportDashboardToPDF } from "metabase/dashboard/analytics";
@@ -33,6 +35,7 @@ import { TextOptionsButton } from "metabase/dashboard/components/TextOptions/Tex
 import type { SectionLayout } from "metabase/dashboard/sections";
 import { layoutOptions } from "metabase/dashboard/sections";
 import {
+  getCanResetFilters,
   getIsShowDashboardInfoSidebar,
   getMissingRequiredParameters,
 } from "metabase/dashboard/selectors";
@@ -46,17 +49,17 @@ import { getPulseFormInput } from "metabase/pulse/selectors";
 import { dismissAllUndo } from "metabase/redux/undo";
 import { getIsNavbarOpen } from "metabase/selectors/app";
 import { getSetting } from "metabase/selectors/settings";
-import { Icon, Menu, Tooltip, Loader, Flex } from "metabase/ui";
+import { Flex, Icon, Loader, Menu, Tooltip } from "metabase/ui";
 import { saveDashboardPdf } from "metabase/visualizations/lib/save-dashboard-pdf";
 import type { UiParameter } from "metabase-lib/v1/parameters/types";
 import type {
-  Bookmark as IBookmark,
+  CardId,
+  Dashboard,
   DashboardId,
   DashboardTabId,
-  Dashboard,
-  DatabaseId,
   Database,
-  CardId,
+  DatabaseId,
+  Bookmark as IBookmark,
   ParameterMappingOptions,
 } from "metabase-types/api";
 import type {
@@ -68,8 +71,8 @@ import { DASHBOARD_PDF_EXPORT_ROOT_ID, SIDEBAR_NAME } from "../../constants";
 import { ExtraEditButtonsMenu } from "../ExtraEditButtonsMenu/ExtraEditButtonsMenu";
 
 import {
-  DashboardHeaderButton,
   DashboardHeaderActionDivider,
+  DashboardHeaderButton,
   SectionMenuItem,
 } from "./DashboardHeader.styled";
 import { DashboardHeaderComponent } from "./DashboardHeaderView";
@@ -169,6 +172,7 @@ export const DashboardHeader = (props: DashboardHeaderProps) => {
 
   const dispatch = useDispatch();
 
+  const canResetFilters = useSelector(getCanResetFilters);
   const formInput = useSelector(getPulseFormInput);
   const isNavBarOpen = useSelector(getIsNavbarOpen);
   const isShowingDashboardInfoSidebar = useSelector(
@@ -191,6 +195,11 @@ export const DashboardHeader = (props: DashboardHeaderProps) => {
     dashboardId: dashboard.id,
     bookmarks,
   });
+
+  const handleResetFilters = async () => {
+    await dispatch(resetParameters());
+    await dispatch(applyDraftParameterValues());
+  };
 
   const handleEdit = (dashboard: Dashboard) => {
     onEditingChange(dashboard);
@@ -510,6 +519,14 @@ export const DashboardHeader = (props: DashboardHeaderProps) => {
     }
 
     if (!isFullscreen && !isEditing && !isAnalyticsDashboard) {
+      if (canResetFilters) {
+        extraButtons.push({
+          title: t`Reset all filters`,
+          icon: "revert",
+          action: () => handleResetFilters(),
+        });
+      }
+
       extraButtons.push({
         title: t`Enter fullscreen`,
         icon: "expand",
@@ -588,7 +605,7 @@ export const DashboardHeader = (props: DashboardHeaderProps) => {
         buttons.push(
           <EntityMenu
             key="dashboard-action-menu-button"
-            triggerAriaLabel="dashboard-menu-button"
+            triggerAriaLabel={t`Move, trash, and more…`}
             items={extraButtons}
             triggerIcon="ellipsis"
             tooltip={t`Move, archive, and more...`}

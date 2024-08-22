@@ -5,28 +5,28 @@ import {
   ORDERS_QUESTION_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
-  restore,
-  downloadAndAssert,
-  startNewQuestion,
-  visualize,
-  visitDashboard,
-  popover,
-  assertSheetRowsCount,
-  filterWidget,
-  saveDashboard,
-  getDashboardCardMenu,
-  describeWithSnowplow,
-  expectGoodSnowplowEvent,
-  expectNoBadSnowplowEvents,
-  resetSnowplow,
-  enableTracking,
   addOrUpdateDashboardCard,
+  assertSheetRowsCount,
   createQuestion,
-  queryBuilderMain,
+  describeWithSnowplow,
+  downloadAndAssert,
   editDashboard,
-  setFilter,
+  enableTracking,
   entityPickerModal,
   entityPickerModalTab,
+  expectGoodSnowplowEvent,
+  expectNoBadSnowplowEvents,
+  filterWidget,
+  getDashboardCardMenu,
+  popover,
+  queryBuilderMain,
+  resetSnowplow,
+  restore,
+  saveDashboard,
+  setFilter,
+  startNewQuestion,
+  visitDashboard,
+  visualize,
 } from "e2e/support/helpers";
 
 const { ORDERS, ORDERS_ID } = SAMPLE_DATABASE;
@@ -314,7 +314,7 @@ describe("scenarios > dashboard > download pdf", () => {
       visitDashboard(dashboard.id);
     });
 
-    cy.findByLabelText("dashboard-menu-button").click();
+    cy.findByLabelText("Move, trash, and more…").click();
 
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
     cy.findByText("Export as PDF").click();
@@ -341,7 +341,7 @@ describeWithSnowplow("scenarios > dashboard > download pdf", () => {
       questions: [canSavePngQuestion, cannotSavePngQuestion],
     }).then(({ dashboard }) => {
       visitDashboard(dashboard.id);
-      cy.findByLabelText("dashboard-menu-button").click();
+      cy.findByLabelText("Move, trash, and more…").click();
 
       popover().findByText("Export as PDF").click();
 

@@ -1,10 +1,10 @@
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
-  restore,
-  openNativeEditor,
   clearFilterWidget,
   filterWidget,
+  openNativeEditor,
   popover,
+  restore,
 } from "e2e/support/helpers";
 
 import * as FieldFilter from "./helpers/e2e-field-filter-helpers";
@@ -85,7 +85,7 @@ describe("scenarios > filters > sql filters > field filter", () => {
         cy.get("input").type("10{enter}");
         cy.findByText("Update filter").click();
       });
-      filterWidget().icon("time_history").click();
+      filterWidget().icon("revert").click();
       filterWidget().findByTestId("field-set-content").should("have.text", "8");
     });
   });

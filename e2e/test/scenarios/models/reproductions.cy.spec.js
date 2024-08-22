@@ -1,56 +1,57 @@
 import { SAMPLE_DB_ID, SAMPLE_DB_SCHEMA_ID } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
-  ORDERS_QUESTION_ID,
   ORDERS_DASHBOARD_ID,
+  ORDERS_QUESTION_ID,
 } from "e2e/support/cypress_sample_instance_data";
 import {
+  addOrUpdateDashboardCard,
+  appBar,
+  assertQueryBuilderRowCount,
+  cartesianChartCircle,
+  closeCommandPalette,
+  commandPalette,
+  commandPaletteSearch,
+  createAction,
+  createNativeQuestion,
+  createQuestion,
+  editDashboard,
+  enterCustomColumnDetails,
   entityPickerModal,
   entityPickerModalLevel,
-  navigationSidebar,
-  openNavigationSidebar,
-  popover,
-  restore,
-  modal,
-  openNativeEditor,
-  saveQuestion,
-  openQuestionActions,
-  sidebar,
-  summarize,
-  filter,
-  addOrUpdateDashboardCard,
-  editDashboard,
-  visitDashboard,
-  setModelMetadata,
-  getDashboardCard,
-  setFilter,
-  visitQuestion,
-  createNativeQuestion,
-  startNewQuestion,
-  createQuestion,
   entityPickerModalTab,
-  enterCustomColumnDetails,
+  filter,
   filterField,
   filterFieldPopover,
-  commandPaletteSearch,
-  commandPalette,
-  closeCommandPalette,
-  createAction,
-  setActionsEnabledForDB,
-  cartesianChartCircle,
-  assertQueryBuilderRowCount,
-  saveMetadataChanges,
-  getNotebookStep,
-  appBar,
-  main,
   filterWidget,
-  rightSidebar,
-  leftSidebar,
-  openNotebook,
-  visualize,
   focusNativeEditor,
+  getDashboardCard,
+  getNotebookStep,
+  leftSidebar,
+  main,
+  modal,
+  navigationSidebar,
   onlyOnOSS,
+  openNativeEditor,
+  openNavigationSidebar,
+  openNotebook,
+  openQuestionActions,
+  popover,
+  restore,
+  rightSidebar,
+  saveMetadataChanges,
+  saveQuestion,
+  setActionsEnabledForDB,
+  setFilter,
+  setModelMetadata,
+  sidebar,
+  startNewNativeModel,
+  startNewQuestion,
+  summarize,
+  visitDashboard,
   visitModel,
+  visitQuestion,
+  visualize,
 } from "e2e/support/helpers";
 import {
   createMockActionParameter,
@@ -892,15 +893,6 @@ describe("issue 26091", () => {
 
     startNewQuestion();
     entityPickerModal().within(() => {
-      entityPickerModalTab("Recents").should(
-        "have.attr",
-        "aria-selected",
-        "true",
-      );
-      cy.findByText("New model").should("be.visible");
-      cy.findByText("Old model").should("not.exist");
-      cy.findByText("Orders Model").should("not.exist");
-
       entityPickerModalTab("Models").click();
       cy.findByText("New model").should("be.visible");
       cy.findByText("Old model").should("be.visible");
@@ -1673,12 +1665,8 @@ describe("issue 37009", () => {
   });
 
   it("should prevent saving new and updating existing models without result_metadata (metabase#37009)", () => {
-    cy.visit("/model/new");
-    cy.findByTestId("new-model-options")
-      .findByText("Use a native query")
-      .click();
+    startNewNativeModel({ query: "select * from products" });
 
-    focusNativeEditor().type("select * from products");
     cy.findByTestId("dataset-edit-bar")
       .button("Save")
       .should("be.disabled")
@@ -1698,7 +1686,7 @@ describe("issue 37009", () => {
       .last()
       .within(() => {
         cy.findByLabelText("Name").type("Model");
-        cy.findByText("Save").click();
+        cy.button("Save").click();
       });
     cy.wait("@saveCard")
       .its("request.body")

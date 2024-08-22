@@ -16,8 +16,8 @@ import {
 import { getParameterValuesByIdFromQueryParams } from "metabase/parameters/utils/parameter-values";
 import { addUndo, dismissUndo } from "metabase/redux/undo";
 import {
-  isParameterValueEmpty,
   PULSE_PARAM_EMPTY,
+  isParameterValueEmpty,
 } from "metabase-lib/v1/parameters/utils/parameter-values";
 import type {
   ActionDashboardCard,
@@ -41,20 +41,21 @@ import {
 } from "../analytics";
 import {
   getAutoApplyFiltersToastId,
+  getDashCardById,
   getDashboard,
   getDashboardBeforeEditing,
   getDashboardId,
-  getDashCardById,
   getDashcards,
   getDraftParameterValues,
+  getFiltersToReset,
   getIsAutoApplyFilters,
-  getParameters,
-  getParameterValues,
   getParameterMappingsBeforeEditing,
+  getParameterValues,
+  getParameters,
 } from "../selectors";
 import { isQuestionDashCard } from "../utils";
 
-import { setDashboardAttributes, setDashCardAttributes } from "./core";
+import { setDashCardAttributes, setDashboardAttributes } from "./core";
 import { closeSidebar, setSidebar } from "./ui";
 
 type SingleParamUpdater = (p: Parameter) => Parameter;
@@ -433,6 +434,24 @@ export const setParameterValueToDefault = createThunkAction(
     if (defaultValue) {
       dispatch(setParameterValue(parameterId, defaultValue));
     }
+  },
+);
+
+export const RESET_PARAMETERS = "metabase/dashboard/RESET_PARAMETERS";
+export const resetParameters = createThunkAction(
+  RESET_PARAMETERS,
+  () => (_dispatch, getState) => {
+    const parameters = getFiltersToReset(getState());
+
+    return parameters.map(parameter => {
+      const newValue = parameter.default ?? null;
+      const isValueEmpty = isParameterValueEmpty(newValue);
+
+      return {
+        id: parameter.id,
+        value: isValueEmpty ? PULSE_PARAM_EMPTY : newValue,
+      };
+    });
   },
 );
 

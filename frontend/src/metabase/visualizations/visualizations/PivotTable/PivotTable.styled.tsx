@@ -1,7 +1,7 @@
 import { css } from "@emotion/react";
 import styled from "@emotion/styled";
 
-import { color, alpha, darken } from "metabase/lib/colors";
+import { alpha, color, darken } from "metabase/lib/colors";
 
 import {
   CELL_HEIGHT,
@@ -109,6 +109,7 @@ interface PivotTableRootProps {
 export const PivotTableRoot = styled.div<PivotTableRootProps>`
   height: 100%;
   font-size: ${PIVOT_TABLE_FONT_SIZE};
+  overflow: auto;
 
   ${props =>
     props.isDashboard
