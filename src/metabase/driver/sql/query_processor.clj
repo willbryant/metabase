@@ -51,9 +51,9 @@
       str/trimr
       (as-> trimmed
         ;; Query could potentially end with a comment.
-        (if (re-find #"--.*$" trimmed)
-          (str trimmed "\n")
-          trimmed))))
+            (if (re-find #"--.*$" trimmed)
+              (str trimmed "\n")
+              trimmed))))
 
 (defn make-nestable-sql
   "Do best effort edit to the `sql`, to make it nestable in subselect.
@@ -274,7 +274,7 @@
                                                        :instance nil)]
                                              (days-till-start-of-first-full-week driver honeysql-expr))
         total-full-week-days               (h2x/- (date driver :day-of-year honeysql-expr)
-                                                 days-till-start-of-first-full-week)
+                                                  days-till-start-of-first-full-week)
         total-full-weeks                   (->honeysql driver [:ceil (compiled (h2x// total-full-week-days 7.0))])]
     (->integer driver (h2x/+ 1 total-full-weeks))))
 
@@ -440,7 +440,6 @@
   {:changelog-test/ignore true, :arglists '([driver identifier json-field]), :added "0.43.1"}
   driver/dispatch-on-initialized-driver
   :hierarchy #'driver/hierarchy)
-
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           Low-Level ->honeysql impls                                           |
@@ -1165,7 +1164,6 @@
             honeysql-form
             honeysql-ags)))
 
-
 ;;; ----------------------------------------------- breakout & fields ------------------------------------------------
 
 (defmethod apply-top-level-clause [:sql :breakout]
@@ -1188,7 +1186,6 @@
          honeysql-form
          (for [field-clause fields]
            (as driver field-clause))))
-
 
 ;;; ----------------------------------------------------- filter -----------------------------------------------------
 
@@ -1228,7 +1225,6 @@
         expr
         [:lower expr]))))
 
-
 (defn- uuid-field?
   [x]
   (and (mbql.u/mbql-clause? x)
@@ -1241,14 +1237,14 @@
   [driver field arg]
   (if (and (uuid-field? field)
              ;; If the arg is a uuid we are happy especially for joins (#46558)
-             (not (uuid-field? arg))
+           (not (uuid-field? arg))
              ;; If we could not convert the arg to a UUID then we have to cast the Field.
              ;; This will not hit indexes, but then we're passing an arg that can only be compared textually.
-             (not (uuid? (->honeysql driver arg)))
+           (not (uuid? (->honeysql driver arg)))
              ;; Check for inlined values
-             (not (= (:database-type (h2x/type-info (->honeysql driver arg))) "uuid")))
-      [::cast field "varchar"]
-      field))
+           (not (= (:database-type (h2x/type-info (->honeysql driver arg))) "uuid")))
+    [::cast field "varchar"]
+    field))
 
 (mu/defn ^:private maybe-cast-uuid-for-text-compare
   "For :contains, :starts-with, and :ends-with.
@@ -1277,30 +1273,46 @@
   (like-clause (->honeysql driver (maybe-cast-uuid-for-text-compare field))
                (generate-pattern driver "%" arg nil options) options))
 
+(defn- parent-honeysql-col-base-type-map
+  [field]
+  (when (and (vector? field)
+             (= 3 (count field))
+             (= :field (first field))
+             (map? (field 2)))
+    (select-keys (field 2) [:base-type])))
+
+(def ^:dynamic *parent-honeysql-col-type-info*
+  "To be bound in `->honeysql <driver> <op>` where op is on of {:>, :>=, :<, :<=, :=, :between}`. Its value should be
+  `{:base-type keyword? :database-type string?}`. The value is used in `->honeysql <driver> :relative-datetime`,
+  the :snowflake implementation at the time of writing, and later in the [[metabase.query-processor.util.relative-datetime/maybe-cacheable-relative-datetime-honeysql]]
+  to determine (1) format of server-side generated sql temporal string and (2) the database type it should be cast to."
+  nil)
+
 (defmethod ->honeysql [:sql :between]
   [driver [_ field min-val max-val]]
-  [:between (->honeysql driver field) (->honeysql driver min-val) (->honeysql driver max-val)])
+  (let [field-honeysql (->honeysql driver field)]
+    (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
+                                                       {:database-type database-type})
+                                                     (parent-honeysql-col-base-type-map field))]
+      [:between field-honeysql (->honeysql driver min-val) (->honeysql driver max-val)])))
 
-(defmethod ->honeysql [:sql :>]
-  [driver [_ field value]]
-  [:> (->honeysql driver field) (->honeysql driver value)])
-
-(defmethod ->honeysql [:sql :<]
-  [driver [_ field value]]
-  [:< (->honeysql driver field) (->honeysql driver value)])
-
-(defmethod ->honeysql [:sql :>=]
-  [driver [_ field value]]
-  [:>= (->honeysql driver field) (->honeysql driver value)])
-
-(defmethod ->honeysql [:sql :<=]
-  [driver [_ field value]]
-  [:<= (->honeysql driver field) (->honeysql driver value)])
+(doseq [operator [:> :>= :< :<=]]
+  (defmethod ->honeysql [:sql operator] ; [:> :>= :< :<=] -- For grep.
+    [driver [_ field value]]
+    (let [field-honeysql (->honeysql driver field)]
+      (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
+                                                         {:database-type database-type})
+                                                       (parent-honeysql-col-base-type-map field))]
+        [operator field-honeysql (->honeysql driver value)]))))
 
 (defmethod ->honeysql [:sql :=]
   [driver [_ field value]]
   (assert field)
-  [:= (->honeysql driver (maybe-cast-uuid-for-equality driver field value)) (->honeysql driver value)])
+  (let [field-honeysql (->honeysql driver (maybe-cast-uuid-for-equality driver field value))]
+    (binding [*parent-honeysql-col-type-info* (merge (when-let [database-type (h2x/database-type field-honeysql)]
+                                                       {:database-type database-type})
+                                                     (parent-honeysql-col-base-type-map field))]
+      [:= field-honeysql (->honeysql driver value)])))
 
 (defn- correct-null-behaviour
   [driver [op & args :as clause]]
@@ -1344,7 +1356,6 @@
 (defmethod apply-top-level-clause [:sql :filter]
   [driver _ honeysql-form {clause :filter}]
   (sql.helpers/where honeysql-form (->honeysql driver clause)))
-
 
 ;;; -------------------------------------------------- join tables ---------------------------------------------------
 
@@ -1410,7 +1421,6 @@
   (let [f apply-joins-honey-sql-2]
     (f driver honeysql-form joins)))
 
-
 ;;; ---------------------------------------------------- order-by ----------------------------------------------------
 
 (defmethod ->honeysql [:sql :asc]
@@ -1436,7 +1446,6 @@
   (-> honeysql-form
       (sql.helpers/limit (inline-num items))
       (sql.helpers/offset (inline-num (* items (dec page))))))
-
 
 ;;; -------------------------------------------------- source-table --------------------------------------------------
 
@@ -1470,7 +1479,6 @@
   (let [table (lib.metadata/table (qp.store/metadata-provider) source-table-id)
         expr  (->honeysql driver table)]
     (sql.helpers/from honeysql-form [expr])))
-
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           Building the HoneySQL Form                                           |
@@ -1616,14 +1624,14 @@
                             (apply distinct? desired-aliases)
                             (every? string? desired-aliases))]
     (merge
-      honeysql-form
-      (if needs-columns?
+     honeysql-form
+     (if needs-columns?
         ;; HoneySQL cannot expand [::h2x/identifier :table "source"] in the with alias.
         ;; This is ok since we control the alias.
-        {:with [[[source-query-alias {:columns (mapv #(h2x/identifier :field %) desired-aliases)}]
-                 source-clause]]
-         :from [[table-alias]]}
-        {:from [[source-clause [table-alias]]]}))))
+       {:with [[[source-query-alias {:columns (mapv #(h2x/identifier :field %) desired-aliases)}]
+                source-clause]]
+        :from [[table-alias]]}
+       {:from [[source-clause [table-alias]]]}))))
 
 (defn- apply-clauses
   "Like [[apply-top-level-clauses]], but handles `source-query` as well, which needs to be handled in a special way

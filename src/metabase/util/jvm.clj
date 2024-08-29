@@ -194,7 +194,7 @@
   {:style/indent 1}
   [num-retries & body]
   `(do-with-auto-retries ~num-retries
-     (fn [] ~@body)))
+                         (fn [] ~@body)))
 
 (def ^:private ^Base64$Decoder base64-decoder
   "A shared Base64 decoder instance."
@@ -302,7 +302,12 @@
 
 (defn poll
   "Returns `(thunk)` if the result satisfies the `done?` predicate within the timeout and nil otherwise.
-  The default timeout is 1000ms and the default interval is 100ms."
+  The default timeout is 1000ms and the default interval is 100ms.
+
+    (u/poll {:thunk       (fn [] (upload!))
+             :done        (fn [response] (get-in response [:status :done]))
+             :timeout-ms  1000
+             :interval-ms 100})"
   [{:keys [thunk done? timeout-ms interval-ms]
     :or   {timeout-ms 1000 interval-ms 100}}]
   (let [start-time (System/currentTimeMillis)]

@@ -5,6 +5,7 @@
    [malli.json-schema :as mjs]
    [metabase.api.common :as api]
    [metabase.api.common.openapi :as openapi]
+   [metabase.api.routes :as routes]
    [metabase.util.malli :as mu]
    [metabase.util.malli.schema :as ms]))
 
@@ -63,7 +64,7 @@
 
 (deftest ^:parallel fix-locations-test
   (is (=? {:properties {:value {:$ref "#/components/schemas/metabase.lib.schema.common~1non-blank-string"}}}
-         (#'openapi/fix-locations (mjs/transform [:map [:value ms/NonBlankString]])))))
+          (#'openapi/fix-locations (mjs/transform [:map [:value ms/NonBlankString]])))))
 
 (deftest ^:parallel path->openapi-test
   (is (= "/{model}/{yyyy-mm}"
@@ -141,4 +142,7 @@
            :components {:schemas {"metabase.lib.schema.common/non-blank-string"
                                   {:allOf [{:type "string", :minLength 1}
                                            {}]}}}}
-         (openapi/openapi-object #'routes))))
+          (openapi/openapi-object #'routes))))
+
+(deftest ^:parallel openapi-all-routes
+  (is (openapi/openapi-object #'routes/routes)))

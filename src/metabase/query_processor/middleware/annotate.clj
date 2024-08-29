@@ -73,10 +73,10 @@
         (throw (ex-info (str (deferred-tru "Query processor error: number of columns returned by driver does not match results.")
                              "\n"
                              (deferred-tru "Expected {0} columns, but first row of resuls has {1} columns."
-                               expected-count actual-count))
-                 {:expected-columns (map :name cols)
-                  :first-row        (first rows)
-                  :type             qp.error-type/qp}))))))
+                                           expected-count actual-count))
+                        {:expected-columns (map :name cols)
+                         :first-row        (first rows)
+                         :type             qp.error-type/qp}))))))
 
 (defn- annotate-native-cols [cols]
   (let [unique-name-fn (lib.util/unique-name-generator (qp.store/metadata-provider))]
@@ -97,7 +97,6 @@
   [_query {:keys [cols rows] :as _results}]
   (check-driver-native-columns cols rows)
   (annotate-native-cols cols))
-
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                       Adding :cols info for MBQL queries                                       |
@@ -196,7 +195,7 @@
     ;; maybe this `infer-expression-type` should takes an `inner-query` and look up the
     ;; source expresison as well?
     (merge (select-keys (infer-expression-type (second expression)) [:converted_timezone])
-     {:base_type :type/DateTime})
+           {:base_type :type/DateTime})
 
     (mbql.u/is-clause? mbql.s/string-functions expression)
     {:base_type :type/Text}
@@ -383,7 +382,6 @@
    ag-clause]
   (lib/column-name (mlv2-query inner-query) (lib.convert/->pMBQL ag-clause)))
 
-
 ;;; ----------------------------------------- Putting it all together (MBQL) -----------------------------------------
 
 (defn- check-correct-number-of-columns-returned [returned-mbql-columns results]
@@ -519,7 +517,6 @@
                       results)
     (check-correct-number-of-columns-returned <> results)))
 
-
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                              Deduplicating names                                               |
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -538,7 +535,6 @@
          (assoc col :name unique-name))
        cols
        (mbql.u/uniquify-names (map :name cols))))
-
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           add-column-info middleware                                           |
@@ -628,7 +624,7 @@
     {:keys [:metadata/model-metadata :alias/escaped->original]} :info} rff]
   (fn add-column-info-rff* [metadata]
     (if (and (= query-type :query)
-             ;; we should have type metadata eiter in the query fields
+             ;; we should have type metadata either in the query fields
              ;; or in the result metadata for the following code to work
              (or (->> query :query keys (some #{:aggregation :breakout :fields}))
                  (every? :base_type (:cols metadata))))

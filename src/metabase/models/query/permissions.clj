@@ -40,7 +40,6 @@
                     :permissions-error?   true}
                    additional-ex-data))))
 
-
 ;;; ---------------------------------------------- Permissions Checking ----------------------------------------------
 
 ;; Is calculating permissions for queries complicated? Some would say so. Refer to this handy flow chart to see how
@@ -60,7 +59,7 @@
 ;;
 
 (mu/defn query->source-table-ids :- [:set [:or [:= ::native] ::lib.schema.id/table]]
-  "Return a sequence of all Table IDs referenced by `query`."
+  "Return a sequence of all Table IDs referenced by `query`, and/or the ::native keyword for native queries."
   [query :- :map]
   (set
    (flatten
@@ -241,7 +240,7 @@
 
   If the [:gtap ::perms] path is present in the query, these perms are implicitly granted to the current user."
   [{{gtap-perms :gtaps} ::perms, :as query} required-perms & {:keys [throw-exceptions?]
-                                                                    :or   {throw-exceptions? true}}]
+                                                              :or   {throw-exceptions? true}}]
   (try
     ;; Check any required v1 paths
     (when-let [paths (:paths required-perms)]

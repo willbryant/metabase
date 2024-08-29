@@ -8,7 +8,18 @@ export const ACTIVITY_MODELS = [
   "dashboard",
   "collection",
 ] as const;
+
 export type ActivityModel = typeof ACTIVITY_MODELS[number];
+
+export const isActivityModel = (model: string): model is ActivityModel =>
+  (ACTIVITY_MODELS as unknown as string[]).includes(model);
+
+export const isLoggableActivityModel = (item: {
+  id: any;
+  model: string;
+}): item is { id: number; model: ActivityModel } => {
+  return typeof item.id === "number" && isActivityModel(item.model);
+};
 
 export interface BaseRecentItem {
   id: number;
@@ -21,6 +32,7 @@ export interface BaseRecentItem {
 export interface RecentTableItem extends BaseRecentItem {
   model: "table";
   display_name: string;
+  table_schema: string;
   database: {
     id: number;
     name: string;
@@ -44,12 +56,31 @@ export interface RecentCollectionItem extends BaseRecentItem {
 
 export type RecentItem = RecentTableItem | RecentCollectionItem;
 
+export const isRecentTableItem = (item: RecentItem): item is RecentTableItem =>
+  item.model === "table";
+
 export interface RecentItemsResponse {
   recent_views: RecentItem[];
+}
+
+export type RecentContexts = "selections" | "views";
+
+export interface RecentsRequest {
+  context: RecentContexts[];
+}
+
+export interface RecentsResponse {
+  recents: RecentItem[];
 }
 
 export type PopularItem = RecentItem;
 
 export interface PopularItemsResponse {
   popular_items: PopularItem[];
+}
+
+export interface CreateRecentRequest {
+  model_id: number;
+  model: ActivityModel;
+  context: "selection";
 }
