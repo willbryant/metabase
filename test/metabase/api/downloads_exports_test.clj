@@ -308,7 +308,32 @@
                  (->> (all-outputs! card {:export-format :csv :format-rows false :pivot true})
                       (group-by second)
                       ((fn [m] (update-vals m #(into #{} (mapv first %)))))
-                      (apply concat)))))))))
+                      (apply concat)))))
+        (testing "only when `public-settings/enable-pivoted-exports` is true (true by default)."
+          (is (= [[["Doohickey" "2016" "$632.14"]
+                   ["Doohickey" "2017" "$854.19"]
+                   ["Doohickey" "2018" "$496.43"]
+                   ["Doohickey" "2019" "$203.13"]
+                   ["Gadget" "2016" "$679.83"]
+                   ["Gadget" "2017" "$1,059.11"]
+                   ["Gadget" "2018" "$844.51"]
+                   ["Gadget" "2019" "$435.75"]
+                   ["Gizmo" "2016" "$529.70"]
+                   ["Gizmo" "2017" "$1,080.18"]
+                   ["Gizmo" "2018" "$997.94"]
+                   ["Gizmo" "2019" "$227.06"]
+                   ["Widget" "2016" "$987.39"]
+                   ["Widget" "2017" "$1,014.68"]
+                   ["Widget" "2018" "$912.20"]
+                   ["Widget" "2019" "$195.04"]]
+                  #{:unsaved-card-download :card-download :dashcard-download
+                    :alert-attachment :subscription-attachment
+                    :public-question-download :public-dashcard-download}]
+                 (mt/with-temporary-setting-values [public-settings/enable-pivoted-exports false]
+                   (->> (all-outputs! card {:export-format :csv :format-rows true :pivot true})
+                        (group-by second)
+                        ((fn [m] (update-vals m #(into #{} (mapv first %)))))
+                        (apply concat))))))))))
 
 (deftest simple-pivot-export-row-col-totals-test
   (testing "Pivot table csv exports respect row/column totals viz-settings"
@@ -476,13 +501,13 @@
                                                 :format_rows   true
                                                 :pivot_results true)
                           csv/read-csv)]
-          (is (= [["Created At"
+          (is (= [["Created At: Year"
                    "Doohickey" "Doohickey"
                    "Gadget" "Gadget"
                    "Gizmo" "Gizmo"
                    "Widget" "Widget"
                    "Row totals" "Row totals"]
-                  ["Created At"
+                  ["Created At: Year"
                    "Sum of Price" "Average of Rating"
                    "Sum of Price" "Average of Rating"
                    "Sum of Price" "Average of Rating"
@@ -511,7 +536,7 @@
                                                 :format_rows   true
                                                 :pivot_results true)
                           csv/read-csv)]
-          (is (= [["Created At" "Category" "Sum of Price"]
+          (is (= [["Created At: Month" "Category" "Sum of Price"]
                   ["April, 2016" "Gadget" "49.54"]
                   ["April, 2016" "Gizmo" "87.29"]
                   ["Totals for April, 2016" "" "136.83"]
@@ -570,7 +595,7 @@
                                                 :format_rows   true
                                                 :pivot_results true)
                           csv/read-csv)]
-          (is (= [["Category" "Created At" "Sum of Price" "Count"]
+          (is (= [["Category" "Created At: Year" "Sum of Price" "Count"]
                   ["Doohickey" "2016" "632.14" "13"]
                   ["Doohickey" "2017" "854.19" "17"]
                   ["Doohickey" "2018" "496.43" "8"]
@@ -619,7 +644,20 @@
                        (->> (spreadsheet/load-workbook in)
                             (spreadsheet/select-sheet "pivot")
                             ((fn [s] (.getPivotTables ^XSSFSheet s)))))]
-          (is (not (nil? pivot))))))))
+          (is (not (nil? pivot))))
+        (testing "but only when `public-settings/enable-pivoted-exports` is true"
+          (mt/with-temporary-setting-values [public-settings/enable-pivoted-exports false]
+            (let [result      (mt/user-http-request :crowberto :post 200
+                                                    (format "card/%d/query/xlsx" pivot-card-id)
+                                                    :format_rows   true
+                                                    :pivot_results true)
+                  sheet-names (with-open [in (io/input-stream result)]
+                                (->> (spreadsheet/load-workbook in)
+                                     spreadsheet/sheet-seq
+                                     (mapv (fn [s] (.getSheetName ^XSSFSheet s)))))]
+              ;; when xlsx exports without pivot, we have only a single Query result sheet.
+              (is (= ["Query result"]
+                     sheet-names)))))))))
 
 (deftest ^:parallel zero-column-native-pivot-tables-test
   (testing "Pivot tables with zero columns download correctly as xlsx."
@@ -650,7 +688,7 @@
                                                                    (mapv spreadsheet/read-cell)))))]
                                [pivot data]))]
           (is (not (nil? pivot)))
-          (is (= [["Category" "Created At" "Sum of Price"]
+          (is (= [["Category" "Created At: Month" "Sum of Price"]
                   ["Doohickey" #inst "2016-05-01T00:00:00.000-00:00" 144.12]
                   ["Doohickey" #inst "2016-06-01T00:00:00.000-00:00" 82.92]
                   ["Doohickey" #inst "2016-07-01T00:00:00.000-00:00" 78.22]
@@ -714,7 +752,7 @@
                                                   (format "card/%d/query/csv" pivot-card-id)
                                                   :format_rows true)
                             csv/read-csv)]
-            (is (= [["Category" "Created At" "Sum of Price"]
+            (is (= [["Category" "Created At: Month" "Sum of Price"]
                     ["Doohickey" "May, 2016" "144.12"]
                     ["Doohickey" "June, 2016" "82.92"]
                     ["Doohickey" "July, 2016" "78.22"]
@@ -1037,7 +1075,7 @@
                                                 :aggregation  [[:sum [:field (mt/id :products :price) {:base-type :type/Float}]]]
                                                 :breakout     [[:field (mt/id :products :category) {:base-type :type/Text}]
                                                                [:field (mt/id :products :created_at) {:base-type :type/DateTime :temporal-unit :year}]]}}}]
-        (is (= [["Category" "Created At" "Sum of Price"]
+        (is (= [["Category" "Created At: Year" "Sum of Price"]
                 ["Doohickey" "2016" "[$$]632.14"]
                 ["Doohickey" "2017" "[$$]854.19"]]
                (take 3 (card-download card {:export-format :xlsx :format-rows true :pivot true})))
@@ -1140,7 +1178,7 @@
                                                                  :values  ["count"]}
                                                                 :column_settings
                                                                 {"[\"name\",\"count\"]" {:column_title "Count Renamed"}}}}]
-        (let [expected-header   ["Created At" "Category" "Count"]
+        (let [expected-header   ["Created At: Year" "Category" "Count"]
               formatted-results (all-downloads card {:export-format :csv :format-rows false :pivot true})]
           (is (= {:unsaved-card-download    expected-header
                   :card-download            expected-header
@@ -1149,7 +1187,7 @@
                   :public-dashcard-download expected-header}
                  (update-vals formatted-results first))))
         (testing "The column title changes are used when format-rows is true"
-          (let [expected-header   ["Created At" "Category" "Count Renamed"]
+          (let [expected-header   ["Created At: Year" "Category" "Count Renamed"]
                 formatted-results (all-downloads card {:export-format :csv :format-rows true :pivot true})]
             (is (= {:unsaved-card-download    expected-header
                     :card-download            expected-header
@@ -1180,7 +1218,7 @@
                                                                  :values  [[:aggregation 0] [:aggregation 1]]}
                                                                 :column_settings
                                                                 {"[\"name\",\"count\"]" {:column_title "Count Renamed"}}}}]
-        (let [expected-header   ["Created At" "Category" "Count" "Min of Created At: Year"]
+        (let [expected-header   ["Created At: Year" "Category" "Count" "Min of Created At: Year"]
               formatted-results (all-downloads card {:export-format :csv :format-rows false :pivot true})]
           (is (= {:unsaved-card-download    expected-header
                   :card-download            expected-header
@@ -1189,7 +1227,7 @@
                   :public-dashcard-download expected-header}
                  (update-vals formatted-results first))))
         (testing "The column title changes are used when format-rows is true"
-          (let [expected-header   ["Created At" "Category" "Count Renamed" "Min of Created At: Year"]
+          (let [expected-header   ["Created At: Year" "Category" "Count Renamed" "Min of Created At: Year"]
                 formatted-results (all-downloads card {:export-format :csv :format-rows true :pivot true})]
             (is (= {:unsaved-card-download    expected-header
                     :card-download            expected-header
