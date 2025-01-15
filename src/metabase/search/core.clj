@@ -21,8 +21,7 @@
 
 (p/import-vars
  [search.config
-  SearchableModel
-  all-models]
+  SearchableModel]
 
  [search.engine
   model-set]
@@ -33,7 +32,8 @@
   search-context]
 
  [search.ingestion
-  process-next-batch!]
+  bulk-ingest!
+  get-next-batch!]
 
  [search.spec
   define-spec])
@@ -59,7 +59,7 @@
   (reduce (partial merge-with max)
           nil
           (for [e (search.engine/active-engines)]
-            (search.engine/reindex! e))))
+            (search.engine/reindex! e nil))))
 
 (defn reset-tracking!
   "Stop tracking the current indexes. Used when resetting the appdb."

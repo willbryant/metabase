@@ -6,7 +6,7 @@
           <div class="container" style="background-color: white; max-width: 555px; border-radius: 24px; margin: 0 auto; padding: 30px;">
             <table class="header">
               <tr>
-                <td width="28px">
+                <td width="28px" style="vertical-align: top;">
                   <img class="icon" style="padding-top: 4px; padding-right: 16px; width: 100%; height: auto; max-width: 20px" src="cid:{{computed.icon_cid}}"/>
                 </td>
                 <td>
@@ -33,19 +33,15 @@
               </tr>
             </table>
             {{{computed.alert_content}}}
-            <p style="color: {{payload.style.color_text_medium}}; font-size: 12px; font-weight: 400">
-              {{#with payload.alert}}
-                {{#if (equals alert_condition "goal")}}
-                  {{#if alert_above_goal}}
-                    when this question meets its goal
-                  {{else}}
-                    when this question goes below its goal
-                  {{/if}}
+            {{#if computed.goal_value}}
+              <p style="color: {{payload.style.color_text_medium}}; font-size: 12px; font-weight: 400">
+                {{#if payload.alert.alert_above_goal}}
+                  This question has reached its goal of {{computed.goal_value}}.
                 {{else}}
-                  whenever this question has any results
+                  This question has gone below its goal of {{computed.goal_value}}.
                 {{/if}}
-              {{/with}}
-            </p>
+              </p>
+            {{/if}}
             {{#if payload.alert.alert_first_only}}
               <p style="color: {{payload.style.color_text_medium}}; font-size: 12px; font-weight: 400">
               We’ll stop sending you alerts about this question now.

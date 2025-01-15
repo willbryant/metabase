@@ -2094,7 +2094,7 @@ H.describeEE("scenarios > dashboard > dashboard cards > click behavior", () => {
 
       // 1st stage - Custom columns
       getClickMapping("Net").click();
-      H.popover().findByText("User → Longitude").click();
+      H.popover().findByText("User → Longitude: 10°").click();
 
       // 1st stage - Reviews #1 (explicit join)
       getClickMapping("Reviews - Product → Reviewer").click();
@@ -2106,7 +2106,7 @@ H.describeEE("scenarios > dashboard > dashboard cards > click behavior", () => {
 
       // 1st stage - People (implicit join with Orders)
       getClickMapping("User → Longitude").click();
-      H.popover().findByText("User → Longitude").click();
+      H.popover().findByText("User → Longitude: 10°").click();
 
       // 1st stage - Products (implicit join with Reviews)
       getClickMapping("Product → Vendor").last().click();
@@ -2126,7 +2126,7 @@ H.describeEE("scenarios > dashboard > dashboard cards > click behavior", () => {
 
       // 2nd stage - Aggregations & breakouts
       getClickMapping("Count").last().click();
-      H.popover().findByText("User → Longitude").click();
+      H.popover().findByText("User → Longitude: 10°").click();
 
       customizeLinkText(`Created at: {{${CREATED_AT_COLUMN_ID}}} - {{count}}`);
 
@@ -2875,11 +2875,11 @@ function customizeLinkText(text) {
 }
 
 function verifyVizTypeIsLine() {
-  cy.findByTestId("viz-type-button").click();
+  H.openVizTypeSidebar();
   cy.findByTestId("sidebar-content")
     .findByTestId("Line-container")
     .should("have.attr", "aria-selected", "true");
-  cy.findByTestId("viz-type-button").click();
+  H.openVizTypeSidebar();
 }
 
 function getClickMapping(columnName) {

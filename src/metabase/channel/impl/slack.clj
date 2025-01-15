@@ -3,6 +3,7 @@
    [clojure.string :as str]
    [metabase.channel.core :as channel]
    [metabase.channel.render.core :as channel.render]
+   [metabase.channel.shared :as channel.shared]
    ;; TODO: integrations.slack should be migrated to channel.slack
    [metabase.integrations.slack :as slack]
    [metabase.models.params.shared :as shared.params]
@@ -72,9 +73,9 @@
                                   (-> (f attachment-data)
                                       (assoc :text (:render/text rendered-info)))
                                   (let [image-bytes (channel.render/png-from-render-info rendered-info slack-width)
-                                        image-url   (slack/upload-file! image-bytes attachment-name channel-id)]
+                                        {:keys [url]} (slack/upload-file! image-bytes attachment-name channel-id)]
                                     (-> (f attachment-data)
-                                        (assoc :image_url image-url)))))))
+                                        (assoc :image_url url)))))))
             []
             attachments)))
 
@@ -100,7 +101,7 @@
                                 :text {:type "plain_text"
                                        :text (str "🔔 " (-> payload :card :name))
                                        :emoji true}}]}
-                     (part->attachment-data (:card_part payload) (slack/files-channel))]]
+                     (part->attachment-data (channel.shared/realize-data-rows (:card_part payload)) (slack/files-channel))]]
     (for [channel-id channel-ids]
       {:channel-id  channel-id
        :attachments attachments})))
@@ -142,7 +143,7 @@
   [parts]
   (let [channel-id (slack/files-channel)]
     (for [part  parts
-          :let  [attachment (part->attachment-data part channel-id)]
+          :let  [attachment (part->attachment-data (channel.shared/realize-data-rows part) channel-id)]
           :when attachment]
       attachment)))
 

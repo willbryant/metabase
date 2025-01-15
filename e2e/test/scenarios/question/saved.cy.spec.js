@@ -421,7 +421,7 @@ describe("scenarios > question > saved", () => {
 //http://127.0.0.1:9080/api/session/00000000-0000-0000-0000-000000000000/requests
 
 // Ensure the webhook tester docker container is running
-// docker run -p 9080:8080/tcp tarampampam/webhook-tester serve --create-session 00000000-0000-0000-0000-000000000000
+// docker run -p 9080:8080/tcp tarampampam/webhook-tester:1.1.0 serve --create-session 00000000-0000-0000-0000-000000000000
 describe(
   "scenarios > question > saved > alerts",
   { tags: ["@external"] },
@@ -454,6 +454,12 @@ describe(
           "auth-method": "none",
           "fe-form-type": "none",
         },
+      });
+
+      cy.request({
+        failOnStatusCode: false,
+        url: `${H.WEBHOOK_TEST_HOST}/api/session/${H.WEBHOOK_TEST_SESSION_ID}/requests`,
+        method: "DELETE",
       });
     });
 

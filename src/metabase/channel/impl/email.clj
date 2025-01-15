@@ -7,6 +7,7 @@
    [metabase.channel.core :as channel]
    [metabase.channel.params :as channel.params]
    [metabase.channel.render.core :as channel.render]
+   [metabase.channel.shared :as channel.shared]
    [metabase.channel.template.handlebars :as handlebars]
    [metabase.email :as email]
    [metabase.email.messages :as messages]
@@ -22,6 +23,7 @@
    [metabase.util.malli :as mu]
    [metabase.util.malli.schema :as ms]
    [metabase.util.markdown :as markdown]
+   [metabase.util.ui-logic :as ui-logic]
    [metabase.util.urls :as urls]
    [ring.util.codec :as codec]))
 
@@ -68,7 +70,7 @@
   [timezone part options]
   (case (:type part)
     :card
-    (channel.render/render-pulse-section timezone part options)
+    (channel.render/render-pulse-section timezone (channel.shared/realize-data-rows part) options)
 
     :text
     {:content (markdown/process-markdown (:text part) :html)}
@@ -110,6 +112,7 @@
 (defn- email-attachment
   [rendered-cards parts]
   (filter some?
+          ;; maybe we need to rewrite this into a transducer?
           (concat (map make-message-attachment (apply merge (map :attachments (u/one-or-many rendered-cards))))
                   (mapcat email.result-attachment/result-attachment parts))))
 
@@ -173,6 +176,7 @@
         attachments        (concat [icon-attachment]
                                    (email-attachment rendered-card
                                                      (assoc-attachment-booleans [alert] [card_part])))
+        goal               (ui-logic/find-goal-value payload)
         message-context-fn (fn [non-user-email]
                              (assoc notification-payload
                                     :computed {:subject         (case (messages/pulse->alert-condition-kwd alert)
@@ -180,6 +184,7 @@
                                                                   :below (trs "Alert: {0} has gone below its goal" (:name card))
                                                                   :rows  (trs "Alert: {0} has results" (:name card)))
                                                :icon_cid        (:content-id icon-attachment)
+                                               :goal_value      goal
                                                :alert_content   (html (:content rendered-card))
                                                :alert_schedule  (messages/alert-schedule-text (:schedule alert))
                                                :management_text (if (nil? non-user-email)
@@ -242,7 +247,7 @@
                 parameters
                 dashboard]} payload
         timezone            (some->> dashboard_parts (some :card) channel.render/defaulted-timezone)
-        rendered-cards      (mapv #(render-part timezone % {:channel.render/include-title? true}) dashboard_parts)
+        rendered-cards      (map #(render-part timezone % {:channel.render/include-title? true}) dashboard_parts)
         icon-attachment     (apply make-message-attachment (icon-bundle :dashboard))
         attachments         (concat
                              [icon-attachment]

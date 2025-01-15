@@ -2,7 +2,6 @@ import cx from "classnames";
 import type { ComponentType } from "react";
 import { Component } from "react";
 import type { ConnectedProps } from "react-redux";
-import { connect } from "react-redux";
 import { push } from "react-router-redux";
 import { t } from "ttag";
 import _ from "underscore";
@@ -30,15 +29,12 @@ import {
   GRID_WIDTH,
   MIN_ROW_HEIGHT,
 } from "metabase/lib/dashboard_grid";
+import { connect } from "metabase/lib/redux";
 import EmbedFrameS from "metabase/public/components/EmbedFrame/EmbedFrame.module.css";
 import { addUndo } from "metabase/redux/undo";
 import { getVisualizationRaw } from "metabase/visualizations";
 import type { Mode } from "metabase/visualizations/click-actions/Mode";
 import LegendS from "metabase/visualizations/components/Legend.module.css";
-import {
-  MOBILE_DEFAULT_CARD_HEIGHT,
-  MOBILE_HEIGHT_BY_DISPLAY_TYPE,
-} from "metabase/visualizations/shared/utils/sizes";
 import type { QueryClickActionsMode } from "metabase/visualizations/types";
 import type {
   BaseDashboardCard,
@@ -350,11 +346,7 @@ class DashboardGrid extends Component<DashboardGridProps, DashboardGridState> {
 
   getLayouts(cards: BaseDashboardCard[]) {
     const desktop = cards.map(this.getLayoutForDashCard);
-    const mobile = generateMobileLayout({
-      desktopLayout: desktop,
-      defaultCardHeight: MOBILE_DEFAULT_CARD_HEIGHT,
-      heightByDisplayType: MOBILE_HEIGHT_BY_DISPLAY_TYPE,
-    });
+    const mobile = generateMobileLayout(desktop);
     return { desktop, mobile };
   }
 
