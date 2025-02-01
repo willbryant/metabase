@@ -202,8 +202,11 @@
                (->> (describe-fields-for-table (mt/db) (t2/select-one Table :id (mt/id :venues)))
                     (map (fn [{:keys [name base-type]}]
                            {:name      (u/lower-case-en name)
-                            :base-type (if (or (isa? base-type :type/Integer)
-                                               (isa? base-type :type/Decimal)) ; H2 DBs returns the ID as BigInt, Oracle as Decimal;
+                            :base-type (if (or
+                                             ; H2 DBs returns the ID as BigInt, Oracle as Decimal, snowflake number
+                                            (isa? base-type :type/Integer)
+                                            (isa? base-type :type/Decimal)
+                                            (and (not (isa? base-type :type/Float)) (isa? base-type :type/Number)))
                                          :type/Integer
                                          base-type)}))
                     set)))))))
@@ -754,7 +757,7 @@
          (is (= #{{:type :normal-column-index :value "id"}}
                 (describe-table-indexes (t2/select-one :model/Table (mt/id :conditional_index))))))))))
 
-(defmethod driver/database-supports? [::driver/driver ::materialized-view-fields]
+(defmethod driver/database-supports? [::driver/driver ::describe-materialized-view-fields]
   [_driver _feature _database]
   true)
 
@@ -781,14 +784,15 @@
                 :mongo
                 :sparksql
                 :sqlite
-                :athena]]
+                :athena
+                :vertica]]
   (defmethod driver/database-supports? [driver ::describe-materialized-view-fields]
     [_driver _feature _database]
     false))
 
 (deftest describe-view-fields
-  (mt/test-drivers (set/union (mt/normal-drivers-with-feature ::describe-materialized-view-fields)
-                              (mt/normal-drivers-with-feature ::describe-view-fields))
+  (mt/test-drivers (set/union (mt/normal-drivers-with-feature ::describe-materialized-view-fields :test/dynamic-dataset-loading)
+                              (mt/normal-drivers-with-feature ::describe-view-fields :test/dynamic-dataset-loading))
     (doseq [materialized? (cond-> []
                             (driver/database-supports? driver/*driver* ::describe-view-fields nil)
                             (conj false)

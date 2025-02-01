@@ -50,10 +50,13 @@
 #?(:clj (p/import-vars [u.jvm
                         all-ex-data
                         auto-retry
+                        string-to-bytes
+                        bytes-to-string
                         decode-base64
                         decode-base64-to-bytes
                         deref-with-timeout
                         encode-base64
+                        encode-base64-bytes
                         filtered-stacktrace
                         full-exception-chain
                         generate-nano-id
@@ -1167,3 +1170,8 @@
     (if res
       (assoc m k res)
       (dissoc m k))))
+
+(defn not-blank
+  "Like not-empty, but for strings"
+  [s]
+  (when-not (str/blank? s) s))

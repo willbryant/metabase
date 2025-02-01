@@ -1,5 +1,6 @@
 (ns metabase.search.core
   (:require
+   [metabase.analytics.prometheus :as prometheus]
    [metabase.search.appdb.core :as search.engines.appdb]
    [metabase.search.config :as search.config]
    [metabase.search.engine :as search.engine]
@@ -8,6 +9,7 @@
    [metabase.search.ingestion :as search.ingestion]
    [metabase.search.spec :as search.spec]
    [metabase.search.util :as search.util]
+   [metabase.util.log :as log]
    [potemkin :as p]))
 
 (comment
@@ -38,6 +40,11 @@
  [search.spec
   define-spec])
 
+(defmethod prometheus/known-labels :metabase-search/index
+  [_]
+  (for [model (keys (search.spec/specifications))]
+    {:model model}))
+
 (defn supports-index?
   "Does this instance support a search index, of any sort?"
   []
@@ -54,12 +61,15 @@
 
 (defn reindex!
   "Populate a new index, and make it active. Simultaneously updates the current index."
-  []
+  [& {:as opts}]
   ;; If there are multiple indexes, return the peak inserted for each type. In practice, they should all be the same.
-  (reduce (partial merge-with max)
-          nil
-          (for [e (search.engine/active-engines)]
-            (search.engine/reindex! e nil))))
+  (try
+    (reduce (partial merge-with max)
+            nil
+            (for [e (search.engine/active-engines)]
+              (search.engine/reindex! e opts)))
+    (catch Throwable e
+      (log/fatal e "Error reindexing search indexes."))))
 
 (defn reset-tracking!
   "Stop tracking the current indexes. Used when resetting the appdb."
@@ -76,3 +86,12 @@
                             seq)]
       ;; We need to delay execution to handle deletes, which alert us *before* updating the database.
       (search.ingestion/ingest-maybe-async! updates))))
+
+(defn delete!
+  "Given a model and a list of model's ids, remove corresponding search entries."
+  [model ids]
+  (doseq [e            (search.engine/active-engines)
+          search-model (->> (vals (search.spec/specifications))
+                            (filter (comp #{model} :model))
+                            (map :name))]
+    (search.engine/delete! e search-model ids)))

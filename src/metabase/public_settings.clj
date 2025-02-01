@@ -818,9 +818,8 @@ See [fonts](../configuring-metabase/fonts.md).")
 (defsetting not-behind-proxy
   (deferred-tru
    (str "Indicates whether Metabase is running behind a proxy that sets the source-address-header for incoming "
-        "requests. Defaults to false, but can be set to true via environment variable."))
+        "requests."))
   :type       :boolean
-  :setter     :none
   :visibility :internal
   :default    false
   :export?    false)
@@ -1056,7 +1055,7 @@ See [fonts](../configuring-metabase/fonts.md).")
   (deferred-tru "Whether or not we analyze any queries at all")
   :visibility :admin
   :export?    false
-  :default    true
+  :default    false
   :type       :boolean)
 
 (defsetting download-row-limit

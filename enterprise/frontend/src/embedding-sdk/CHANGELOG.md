@@ -1,3 +1,42 @@
+## [0.52.8](https://github.com/metabase/metabase/compare/embedding-sdk-0.52.7...embedding-sdk-0.52.8) (2025-01-28)
+
+
+### Bug Fixes
+
+* **sdk:** add theme change transition to the root element ([#52427](https://github.com/metabase/metabase/issues/52427)) ([#52449](https://github.com/metabase/metabase/issues/52449)) ([754cf8e](https://github.com/metabase/metabase/commit/754cf8ed12d5df5c9a4f1225228b8aa5be6547bf))
+* **sdk:** disable dashboard card click behavior and prevent url formatting ([#51290](https://github.com/metabase/metabase/issues/51290)) ([#52390](https://github.com/metabase/metabase/issues/52390)) ([7f821ff](https://github.com/metabase/metabase/commit/7f821ff352844c5bc8b521134a974a3e5b5d0636))
+* **sdk:** echarts tooltip is cut off below the viewport height ([#52310](https://github.com/metabase/metabase/issues/52310)) ([#52572](https://github.com/metabase/metabase/issues/52572)) ([a32c63d](https://github.com/metabase/metabase/commit/a32c63d89f98d9a8c8e38dafe16592ed3129643e))
+* **sdk:** fix data picker crash by using mantine popover ([#52203](https://github.com/metabase/metabase/issues/52203)) ([b19cec4](https://github.com/metabase/metabase/commit/b19cec43b0b7dd8ad8180418c784826447b401db)), closes [#52096](https://github.com/metabase/metabase/issues/52096)
+* **sdk:** Fix nextJS compatibility layer missing components ([#52672](https://github.com/metabase/metabase/issues/52672)) ([#52741](https://github.com/metabase/metabase/issues/52741)) ([fb732d6](https://github.com/metabase/metabase/commit/fb732d659925647080c11fd0d23340ab934d9f14))
+* **sdk:** fix save question form's cancel button height ([#52504](https://github.com/metabase/metabase/issues/52504)) ([#52573](https://github.com/metabase/metabase/issues/52573)) ([487cb25](https://github.com/metabase/metabase/commit/487cb254367b261a86d9adc61fb5fa2466e2a672))
+
+
+### Features
+
+* **sdk:** granular documentation links in usage problem banner ([#52257](https://github.com/metabase/metabase/issues/52257)) ([#52386](https://github.com/metabase/metabase/issues/52386)) ([524c8f8](https://github.com/metabase/metabase/commit/524c8f817c0acc5b01466abb0ea25b71741071d7))
+
+
+
+## [0.52.7](https://github.com/metabase/metabase/compare/embedding-sdk-0.52.6...embedding-sdk-0.52.7) (2025-01-18)
+
+
+### Bug Fixes
+
+* **sdk:** Add segmented button for chart settings ([#52076](https://github.com/metabase/metabase/issues/52076)) ([#52233](https://github.com/metabase/metabase/issues/52233)) ([70f581e](https://github.com/metabase/metabase/commit/70f581e84c7dfe258af01bd6b0d75dce5fd12100))
+* **sdk:** add supports for xx-YY locales in embed/public-links and sdk ([#51002](https://github.com/metabase/metabase/issues/51002)) ([#51571](https://github.com/metabase/metabase/issues/51571)) ([e3f81d8](https://github.com/metabase/metabase/commit/e3f81d8275a1f56a9674377c9046560f24e8adb9))
+* **sdk:** Ensure that styles within the custom expression editor still work ([#51878](https://github.com/metabase/metabase/issues/51878)) ([#51982](https://github.com/metabase/metabase/issues/51982)) ([e8ebe5e](https://github.com/metabase/metabase/commit/e8ebe5eb96f71cb2f136ef65fc3f2c790a3bc210))
+* **sdk:** Fix alignment of ColorSelector in SDK Chart Settings ([#51000](https://github.com/metabase/metabase/issues/51000)) ([#51325](https://github.com/metabase/metabase/issues/51325)) ([db5213e](https://github.com/metabase/metabase/commit/db5213ebf21bf09a7a393befc347254bce96aea3))
+* **sdk:** Standardize SDK components errors with different ID formats ([#49714](https://github.com/metabase/metabase/issues/49714)) ([#52187](https://github.com/metabase/metabase/issues/52187)) ([b561470](https://github.com/metabase/metabase/commit/b561470e2424cc947b8d8432653c531e66db6231)), closes [metabase#51969](https://github.com/metabase/issues/51969)
+
+
+### Features
+
+* **sdk:** Interactive Question Chart Settings Dropdown ([#51971](https://github.com/metabase/metabase/issues/51971)) ([3376ced](https://github.com/metabase/metabase/commit/3376cedf29f5af540a63a85468444b4fa5a0032a))
+* **sdk:** make editable dashboard grid border color themeable ([#51060](https://github.com/metabase/metabase/issues/51060)) ([#51635](https://github.com/metabase/metabase/issues/51635)) ([b5e537b](https://github.com/metabase/metabase/commit/b5e537b56bd847dc16607382e508983618f249ff))
+* **sdk:** Modify Interactive Question Layout ([#51103](https://github.com/metabase/metabase/issues/51103)) ([e774193](https://github.com/metabase/metabase/commit/e7741933adaa3aedd8595c1e8082085f8e647d36))
+
+
+
 ## [0.52.6](https://github.com/metabase/metabase/compare/embedding-sdk-0.52.5-nightly...embedding-sdk-0.52.6) (2024-12-20)
 
 

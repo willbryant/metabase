@@ -47,26 +47,22 @@ describe("scenarios > embedding > questions", () => {
     cy.icon("info").realHover();
     H.popover().contains(description);
 
-    // Data model: Renamed column
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("Product ID as Title");
-    // Data model: Display value changed to show FK
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("Awesome Concrete Shoes");
-    // Custom column
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("Math");
-    // Question settings: Renamed column
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("Billed");
-    // Question settings: Column formating
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("€39.72");
-    // Question settings: Abbreviated date, day enabled, 24H clock with seconds
-    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-    cy.findByText("Tue, Feb 11, 2025, 21:40:27");
-    // Question settings: Show mini-bar
-    cy.findAllByTestId("mini-bar");
+    cy.findByTestId("embed-frame").within(() => {
+      // Data model: Renamed column
+      cy.findByText("Product ID as Title");
+      // Data model: Display value changed to show FK
+      cy.findByText("Awesome Concrete Shoes");
+      // Custom column
+      cy.findByText("Math");
+      // Question settings: Renamed column
+      cy.findByText("Billed");
+      // Question settings: Column formating
+      cy.findByText("€39.72");
+      // Question settings: Abbreviated date, day enabled, 24H clock with seconds
+      cy.findByText("Tue, Feb 11, 2025, 21:40:27");
+      // Question settings: Show mini-bar
+      cy.findAllByTestId("mini-bar-container");
+    });
 
     // Data model: Subtotal is turned off globally
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
@@ -137,7 +133,7 @@ describe("scenarios > embedding > questions", () => {
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
     cy.findByText("February 11, 2025, 9:40 PM");
 
-    cy.findAllByTestId("mini-bar").should("not.exist");
+    cy.findAllByTestId("mini-bar-container").should("not.exist");
 
     // Data model: Subtotal is turned off globally
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
@@ -168,7 +164,7 @@ describe("scenarios > embedding > questions", () => {
     cy.findByText("€39.72");
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
     cy.findByText("Tue, Feb 11, 2025, 21:40:27");
-    cy.findAllByTestId("mini-bar");
+    cy.findAllByTestId("mini-bar-container");
     // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
     cy.findByText("Subtotal").should("not.exist");
 
@@ -210,21 +206,20 @@ H.describeEE("scenarios [EE] > embedding > questions", () => {
       enable_embedding: true,
     });
 
-    H.visitQuestion(ORDERS_QUESTION_ID);
-
-    H.openStaticEmbeddingModal({ activeTab: "parameters", acceptTerms: false });
-
     // We don't have a de-CH.json file, so it should fallback to de.json, see metabase#51039 for more details
     cy.intercept("/app/locales/de.json").as("deLocale");
 
-    H.visitIframe();
-
-    cy.url().then(url => {
-      cy.visit({
-        // there is already a `#` in the URL from other static embed display options e.g. `#bordered=true&titled=true&downloads=true`
-        url: url + "&locale=de-CH",
-      });
-    });
+    H.visitEmbeddedPage(
+      {
+        resource: { question: ORDERS_QUESTION_ID },
+        params: {},
+      },
+      {
+        additionalHashOptions: {
+          locale: "de-CH",
+        },
+      },
+    );
 
     cy.wait("@deLocale");
 
@@ -232,6 +227,26 @@ H.describeEE("scenarios [EE] > embedding > questions", () => {
     H.main().findByText("Zeilen", { exact: false });
 
     cy.url().should("include", "locale=de");
+  });
+
+  it("should display according to `#font` hash parameter (metabase#45638)", () => {
+    cy.request("PUT", `/api/card/${ORDERS_QUESTION_ID}`, {
+      enable_embedding: true,
+    });
+
+    H.visitEmbeddedPage(
+      {
+        resource: { question: ORDERS_QUESTION_ID },
+        params: {},
+      },
+      {
+        additionalHashOptions: {
+          font: "Roboto",
+        },
+      },
+    );
+
+    H.main().should("have.css", "font-family", "Roboto, sans-serif");
   });
 });
 

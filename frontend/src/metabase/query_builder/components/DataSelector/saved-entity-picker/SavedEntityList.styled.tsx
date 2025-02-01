@@ -1,13 +1,12 @@
 import styled from "@emotion/styled";
 
-import LoadingAndErrorWrapper from "metabase/components/LoadingAndErrorWrapper";
+import { LoadingAndErrorWrapper } from "metabase/components/LoadingAndErrorWrapper";
 import SelectList from "metabase/components/SelectList";
 import { breakpointMaxSmall } from "metabase/styled-components/theme/media-queries";
 
 export const SavedEntityListRoot = styled(SelectList)`
   overflow: auto;
   width: 100%;
-  padding: 0.5rem;
 
   ${breakpointMaxSmall} {
     min-height: 220px;
