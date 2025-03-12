@@ -3,19 +3,19 @@
   (:require
    [clj-http.client :as http]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.string :as str]
    [clojure.walk :as walk]
    [environ.core :as env]
    [java-time.api :as t]
    [medley.core :as m]
+   [metabase.analytics.settings :as analytics.settings]
    [metabase.analytics.snowplow :as snowplow]
-   [metabase.channel.email :as email]
    [metabase.config :as config]
    [metabase.db :as db]
    [metabase.db.query :as mdb.query]
    [metabase.driver :as driver]
    [metabase.eid-translation :as eid-translation]
-   [metabase.embed.settings :as embed.settings]
    [metabase.integrations.google :as google]
    [metabase.integrations.slack :as slack]
    [metabase.models.humanization :as humanization]
@@ -104,12 +104,12 @@
 
 (def ^:private ui-colors #{:brand :filter :summarize})
 
-(defn appearance-ui-colors-changed?
+(defn- appearance-ui-colors-changed?
   "Returns true if the 'User Interface Colors' have been customized"
   []
   (boolean (seq (select-keys (public-settings/application-colors) ui-colors))))
 
-(defn appearance-chart-colors-changed?
+(defn- appearance-chart-colors-changed?
   "Returns true if the 'Chart Colors' have been customized"
   []
   (boolean (seq (apply dissoc (public-settings/application-colors) ui-colors))))
@@ -125,21 +125,21 @@
    :report_timezone                      (driver/report-timezone)
    ;; We deprecated advanced humanization but have this here anyways
    :friendly_names                       (= (humanization/humanization-strategy) "advanced")
-   :email_configured                     (email/email-configured?)
+   :email_configured                     (setting/get :email-configured?)
    :slack_configured                     (slack/slack-configured?)
    :sso_configured                       (google/google-auth-enabled)
    :instance_started                     (snowplow/instance-creation)
    :has_sample_data                      (t2/exists? :model/Database, :is_sample true)
-   :enable_embedding                     #_{:clj-kondo/ignore [:deprecated-var]} (embed.settings/enable-embedding)
-   :enable_embedding_sdk                 (embed.settings/enable-embedding-sdk)
-   :enable_embedding_interactive         (embed.settings/enable-embedding-interactive)
-   :enable_embedding_static              (embed.settings/enable-embedding-static)
+   :enable_embedding                     #_{:clj-kondo/ignore [:deprecated-var]} (setting/get :enable-embedding)
+   :enable_embedding_sdk                 (setting/get :enable-embedding-sdk)
+   :enable_embedding_interactive         (setting/get :enable-embedding-interactive)
+   :enable_embedding_static              (setting/get :enable-embedding-static)
    :embedding_app_origin_set             (boolean
                                           #_{:clj-kondo/ignore [:deprecated-var]}
-                                          (embed.settings/embedding-app-origin))
-   :embedding_app_origin_sdk_set         (boolean (let [sdk-origins (embed.settings/embedding-app-origins-sdk)]
+                                          (setting/get :embedding-app-origin))
+   :embedding_app_origin_sdk_set         (boolean (let [sdk-origins (setting/get :embedding-app-origins-sdk)]
                                                     (and sdk-origins (not= "localhost:*" sdk-origins))))
-   :embedding_app_origin_interactive_set (embed.settings/embedding-app-origins-interactive)
+   :embedding_app_origin_interactive_set (setting/get :embedding-app-origins-interactive)
    :appearance_site_name                 (not= (public-settings/site-name) "Metabase")
    :appearance_help_link                 (public-settings/help-link)
    :appearance_logo                      (not= (public-settings/application-logo-url) "app/assets/img/logo.svg")
@@ -172,36 +172,91 @@
   []
   {:groups (t2/count :model/PermissionsGroup)})
 
-(defn- card-has-params? [card]
-  (boolean (get-in card [:dataset_query :native :template-tags])))
+(defn- and-not-nil
+  ([not-nil-field]
+   (and-not-nil nil not-nil-field))
+  ([case-boolean not-nil-field]
+   (cond->> [:!= not-nil-field nil]
+     case-boolean (conj [:and case-boolean]))))
+
+(defn- count-case
+  [case-boolean]
+  [:count [:case case-boolean [:inline 1] :else [:inline nil]]])
+
+(defn- card-has-params
+  []
+  (condp = (db/db-type)
+    :mysql [:json_contains_path
+            :dataset_query
+            [:inline "one"]
+            [:inline "$.native.\"template-tags\".*"]]
+    :postgres [:jsonb_path_exists
+               [:cast :dataset_query :jsonb]
+               [:inline "$.native.\"template-tags\" ? (exists(@.*))"]]))
+
+(defn- contains-embedding-param
+  [param]
+  (condp = (db/db-type)
+    :mysql [:!= [:json_search
+                 :embedding_params
+                 [:inline "one"]
+                 [:inline param]]
+            nil]
+    :postgres [:jsonb_path_exists
+               [:cast :embedding_params :jsonb]
+               [:inline (str "$.* ? (@ == \"" param "\")")]]))
+
+(def ^:private embedding-on [:= :enable_embedding [:inline true]])
 
 (defn- question-metrics
   "Get metrics based on questions
   TODO characterize by # executions and avg latency"
   []
-  (let [cards (t2/select [:model/Card :query_type :public_uuid :enable_embedding :embedding_params :dataset_query
-                          :dashboard_id :entity_id :created_at :collection_id :name]
-                         {:where (mi/exclude-internal-content-hsql :model/Card)})]
-    {:questions (merge-count-maps (for [card cards]
-                                    (let [native? (= (keyword (:query_type card)) :native)
-                                          dq? (some? (:dashboard_id card))]
-                                      {:total                 1
-                                       :native                native?
-                                       :gui                   (not native?)
-                                       :is_dashboard_question dq?
-                                       :with_params           (card-has-params? card)})))
-     :public    (merge-count-maps (for [card  cards
-                                        :when (:public_uuid card)]
-                                    {:total       1
-                                     :with_params (card-has-params? card)}))
-     :embedded  (merge-count-maps (for [card  cards
-                                        :when (:enable_embedding card)]
-                                    (let [embedding-params-vals (set (vals (:embedding_params card)))]
-                                      {:total                1
-                                       :with_params          (card-has-params? card)
-                                       :with_enabled_params  (contains? embedding-params-vals "enabled")
-                                       :with_locked_params   (contains? embedding-params-vals "locked")
-                                       :with_disabled_params (contains? embedding-params-vals "disabled")})))}))
+  (let [json-supported? (contains? #{:mysql :mariadb :postgres} (db/db-type))
+        cards (t2/select-one (cond-> [:model/Card
+                                      [:%count.* :total]
+                                      [(count-case [:= [:inline "native"] :query_type])
+                                       :native]
+                                      [(count-case [:!= [:inline "native"] :query_type])
+                                       :gui]
+                                      [(count-case [:!= :dashboard_id nil])
+                                       :is_dashboard_question]
+                                      [(count-case [:= :enable_embedding [:inline true]])
+                                       :total_embedded]
+                                      [(count-case (and-not-nil :public_uuid))
+                                       :total_public]]
+                               ;; json_exists/contains which we use to query json encoded data stored in text
+                               ;; columns is not supported on h2 databases, so we exclude these stats when
+                               ;; the app db is h2.
+                               json-supported? (conj
+                                                [(count-case (card-has-params))
+                                                 :with_params]
+                                                [(count-case (and-not-nil (card-has-params) :public_uuid))
+                                                 :with_params_public]
+                                                [(count-case [:and embedding-on (card-has-params)])
+                                                 :with_params_embedded]
+                                                [(count-case [:and (contains-embedding-param "enabled")
+                                                              embedding-on])
+                                                 :with_enabled_params]
+                                                [(count-case [:and (contains-embedding-param "locked")
+                                                              embedding-on])
+                                                 :with_locked_params]
+                                                [(count-case [:and (contains-embedding-param "disabled")
+                                                              embedding-on])
+                                                 :with_disabled_params]))
+                             {:where (mi/exclude-internal-content-hsql :model/Card)})]
+    ;; duplicate previous behaviour where these are empty maps if there are no matching cards in the given
+    ;; category
+    (cond-> {:questions {} :public {} :embedded {}}
+      (> (:total cards) 0) (assoc :questions (select-keys cards [:total :native :gui :is_dashboard_question :with_params]))
+      (> (:total_public cards) 0) (assoc :public (-> (select-keys cards [:total_public :with_params_public])
+                                                     (set/rename-keys {:total_public :total :with_params_public :with_params})))
+      (> (:total_embedded cards) 0) (assoc :embedded (-> (select-keys cards [:total_embedded
+                                                                             :with_params_embedded
+                                                                             :with_enabled_params
+                                                                             :with_locked_params
+                                                                             :with_disabled_params])
+                                                         (set/rename-keys {:total_embedded :total :with_params_embedded :with_params}))))))
 
 (defn- dashboard-metrics
   "Get metrics based on dashboards
@@ -784,7 +839,7 @@
   []
   [{:name      :email
     :available true
-    :enabled   (email/email-configured?)}
+    :enabled   (setting/get :email-configured?)}
    {:name      :slack
     :available true
     :enabled   (slack/slack-configured?)}
@@ -800,13 +855,13 @@
    {:name      :interactive-embedding
     :available (premium-features/hide-embed-branding?)
     :enabled   (and
-                (embed.settings/enable-embedding-interactive)
-                (boolean (embed.settings/embedding-app-origins-interactive))
+                (setting/get :enable-embedding-interactive)
+                (boolean (setting/get :embedding-app-origins-interactive))
                 (public-settings/sso-enabled?))}
    {:name      :static-embedding
     :available true
     :enabled   (and
-                (embed.settings/enable-embedding-static)
+                (setting/get :enable-embedding-static)
                 (or
                  (t2/exists? :model/Dashboard :enable_embedding true)
                  (t2/exists? :model/Card :enable_embedding true)))}
@@ -890,7 +945,7 @@
         grouped-metrics     (snowplow-grouped-metrics (->snowplow-grouped-metric-info))
         features            (snowplow-features)]
     ;; grouped_metrics and settings are required in the json schema, but their data will be included in the next Milestone:
-    {"analytics_uuid"      (snowplow/analytics-uuid)
+    {"analytics_uuid"      (analytics.settings/analytics-uuid)
      "features"            features
      "grouped_metrics"     grouped-metrics
      "instance_attributes" instance-attributes
@@ -928,5 +983,5 @@
               (str "Missing required keys in snowplow-data. got:" (sort (keys snowplow-data))))
       #_{:clj-kondo/ignore [:deprecated-var]}
       (send-stats-deprecated! stats)
-      (snowplow/track-event! ::snowplow/instance_stats snowplow-data)
+      (snowplow/track-event! :snowplow/instance_stats snowplow-data)
       (stats-post-cleanup))))

@@ -7,8 +7,7 @@
    [flatland.ordered.map :as ordered-map]
    [java-time.api :as t]
    [medley.core :as m]
-   [metabase.analytics.prometheus :as prometheus]
-   [metabase.analytics.snowplow :as snowplow]
+   [metabase.analytics.core :as analytics]
    [metabase.api.common :as api]
    [metabase.driver :as driver]
    [metabase.driver.ddl.interface :as ddl.i]
@@ -19,6 +18,7 @@
    [metabase.lib.core :as lib]
    [metabase.lib.util :as lib.util]
    [metabase.models.card :as card]
+   [metabase.models.card.metadata :as card.metadata]
    [metabase.models.collection :as collection]
    [metabase.models.humanization :as humanization]
    [metabase.models.interface :as mi]
@@ -641,14 +641,14 @@
                                            :model-id    (:id card)
                                            :stats       stats}})
 
-        (snowplow/track-event! ::snowplow/csvupload
-                               (assoc stats
-                                      :event    :csv-upload-successful
-                                      :model-id (:id card)))
+        (analytics/track-event! :snowplow/csvupload
+                                (assoc stats
+                                       :event    :csv-upload-successful
+                                       :model-id (:id card)))
         (assoc card :table-id (:id table)))
       (catch Throwable e
-        (prometheus/inc! :metabase-csv-upload/failed)
-        (snowplow/track-event! ::snowplow/csvupload (assoc (fail-stats filename file)
+        (analytics/inc! :metabase-csv-upload/failed)
+        (analytics/track-event! :snowplow/csvupload (assoc (fail-stats filename file)
                                                            :event :csv-upload-failed))
 
         (throw e)))))
@@ -743,7 +743,7 @@
       (lib/source-table-id query))))
 
 (defn- invalidate-cached-models!
-  "Invalidate the model caches for all cards whose `:based_on_upload` value resolves to the given table."
+  "Invalidate the model cache and result metadata for all models where `:based_on_upload` resolves to the given table."
   [table]
   ;; NOTE: It is important that this logic is kept in sync with `model-hydrate-based-on-upload`
   (when-let [model-ids (->> (t2/select [:model/Card :id :dataset_query]
@@ -754,7 +754,15 @@
                             (map :id)
                             seq)]
     ;; Ideally we would do all the filtering in the query, but this would not allow us to leverage mlv2.
-    (persisted-info/invalidate! {:card_id [:in model-ids]})))
+    (persisted-info/invalidate! {:card_id [:in model-ids]})
+    ;; Also refresh the metadata, so that newly added columns are visible, and types are updated.
+    (doseq [id model-ids]
+      (let [card     (t2/select-one [:model/Card :dataset_query :result_metadata] id)
+            ;; Unclear why this is required, would expect it to get this from the field's display name, as it does for
+            ;; the initial upload.
+            fix-name #(update % :display_name humanization/name->human-readable-name)
+            metadata (card.metadata/refresh-metadata card {:update-fn fix-name})]
+        (t2/update! :model/Card id {:result_metadata metadata})))))
 
 (defn- update-with-csv! [database table filename file & {:keys [replace-rows?]}]
   (try
@@ -830,12 +838,12 @@
                                              :table-name  (:name table)
                                              :stats       stats}})
 
-          (snowplow/track-event! ::snowplow/csvupload (assoc stats :event :csv-append-successful))
+          (analytics/track-event! :snowplow/csvupload (assoc stats :event :csv-append-successful))
 
           {:row-count row-count})))
     (catch Throwable e
-      (prometheus/inc! :metabase-csv-upload/failed)
-      (snowplow/track-event! ::snowplow/csvupload (assoc (fail-stats filename file)
+      (analytics/inc! :metabase-csv-upload/failed)
+      (analytics/track-event! :snowplow/csvupload (assoc (fail-stats filename file)
                                                          :event :csv-append-failed))
       (throw e))))
 

@@ -3,7 +3,7 @@
   (:require
    [medley.core :as m]
    [metabase.actions.core :as actions]
-   [metabase.analytics.snowplow :as snowplow]
+   [metabase.analytics.core :as analytics]
    [metabase.api.card :as api.card]
    [metabase.api.common :as api]
    [metabase.api.common.validation :as validation]
@@ -388,7 +388,7 @@
             (actions/execute-dashcard! dashboard-id dashcard-id (update-keys parameters name))))))))
 
 (api.macros/defendpoint :get "/oembed"
-  "oEmbed endpoint used to retreive embed code and metadata for a (public) Metabase URL."
+  "oEmbed endpoint used to retrieve embed code and metadata for a (public) Metabase URL."
   [_route-params
    {:keys [url maxheight maxwidth]}
    :- [:map
@@ -714,11 +714,11 @@
         ;; you're by definition allowed to run it without a perms check anyway
         (request/as-admin
           (let [action (api/check-404 (actions/select-action :public_uuid uuid :archived false))]
-            (snowplow/track-event! ::snowplow/action
-                                   {:event     :action-executed
-                                    :source    :public_form
-                                    :type      (:type action)
-                                    :action_id (:id action)})
+            (analytics/track-event! :snowplow/action
+                                    {:event     :action-executed
+                                     :source    :public_form
+                                     :type      (:type action)
+                                     :action_id (:id action)})
             ;; Undo middleware string->keyword coercion
             (actions/execute-action! action (update-keys parameters name))))))))
 
@@ -738,7 +738,8 @@
   (validation/check-public-sharing-enabled)
   (let [card-id    (api/check-404 (t2/select-one-pk :model/Card :public_uuid uuid, :archived false))
         parameters (json/decode+kw parameters)]
-    (api.tiles/process-tiles-query-for-card card-id parameters zoom x y lat-field lon-field)))
+    (request/as-admin
+      (api.tiles/process-tiles-query-for-card card-id parameters zoom x y lat-field lon-field))))
 
 (api.macros/defendpoint :get "/tiles/dashboard/:uuid/dashcard/:dashcard-id/card/:card-id/:zoom/:x/:y/:lat-field/:lon-field"
   "Generates a single tile image for a Card using the map visualization in a publicly-accessible Dashboard. Does not
@@ -756,7 +757,8 @@
   (validation/check-public-sharing-enabled)
   (let [dashboard-id (api/check-404 (t2/select-one-pk :model/Dashboard :public_uuid uuid, :archived false))
         parameters   (json/decode+kw parameters)]
-    (api.tiles/process-tiles-query-for-dashcard dashboard-id dashcard-id card-id parameters zoom x y lat-field lon-field)))
+    (request/as-admin
+      (api.tiles/process-tiles-query-for-dashcard dashboard-id dashcard-id card-id parameters zoom x y lat-field lon-field))))
 
 ;;; ----------------------------------------- Route Definitions & Complaints -----------------------------------------
 
