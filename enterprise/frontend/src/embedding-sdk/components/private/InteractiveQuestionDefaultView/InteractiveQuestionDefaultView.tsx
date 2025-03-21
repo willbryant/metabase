@@ -5,6 +5,7 @@ import { t } from "ttag";
 
 import {
   QuestionNotFoundError,
+  SdkError,
   SdkLoader,
 } from "embedding-sdk/components/private/PublicComponentWrapper";
 import { shouldRunCardQuery } from "embedding-sdk/lib/interactive-question";
@@ -27,16 +28,16 @@ import {
 import { shouldShowSaveButton } from "../InteractiveQuestion/components";
 import { useInteractiveQuestionContext } from "../InteractiveQuestion/context";
 
-import InteractiveQuestionS from "./InteractiveQuestionResult.module.css";
-import { ResultTitle } from "./ResultTitle";
+import { DefaultViewTitle } from "./DefaultViewTitle";
+import InteractiveQuestionS from "./InteractiveQuestionDefaultView.module.css";
 
-export interface InteractiveQuestionResultProps {
+export interface InteractiveQuestionDefaultViewProps {
   title?: SdkQuestionTitleProps;
   withResetButton?: boolean;
   withChartTypeSelector?: boolean;
 }
 
-export const InteractiveQuestionResult = ({
+export const InteractiveQuestionDefaultView = ({
   height,
   width,
   className,
@@ -44,7 +45,7 @@ export const InteractiveQuestionResult = ({
   title,
   withResetButton,
   withChartTypeSelector,
-}: InteractiveQuestionResultProps & FlexibleSizeProps): ReactElement => {
+}: InteractiveQuestionDefaultViewProps & FlexibleSizeProps): ReactElement => {
   const {
     originalId,
     question,
@@ -54,7 +55,8 @@ export const InteractiveQuestionResult = ({
     onCreate,
     onSave,
     isSaveEnabled,
-    saveToCollection,
+    targetCollection,
+    withDownloads,
     isCardIdError,
   } = useInteractiveQuestionContext();
 
@@ -75,9 +77,15 @@ export const InteractiveQuestionResult = ({
     return <SdkLoader />;
   }
 
-  // `isCardError: true` when the entity ID couldn't be resolved
-  if ((!question || isCardIdError) && originalId && originalId !== "new") {
-    return <QuestionNotFoundError id={originalId} />;
+  if (
+    !question ||
+    (isCardIdError && originalId !== "new" && originalId !== null)
+  ) {
+    if (originalId) {
+      return <QuestionNotFoundError id={originalId} />;
+    } else {
+      return <SdkError message={t`Question not found`} />;
+    }
   }
 
   const showSaveButton =
@@ -99,7 +107,10 @@ export const InteractiveQuestionResult = ({
               <Box mr="sm">
                 <InteractiveQuestion.BackButton />
               </Box>
-              <ResultTitle title={title} withResetButton={withResetButton} />
+              <DefaultViewTitle
+                title={title}
+                withResetButton={withResetButton}
+              />
             </Group>
             {showSaveButton && (
               <InteractiveQuestion.SaveButton onClick={openSaveModal} />
@@ -144,10 +155,13 @@ export const InteractiveQuestionResult = ({
                 </>
               )}
             </Group>
-            <InteractiveQuestion.EditorButton
-              isOpen={isEditorOpen}
-              onClick={toggleEditor}
-            />
+            <Group spacing="sm">
+              {withDownloads && <InteractiveQuestion.DownloadWidgetDropdown />}
+              <InteractiveQuestion.EditorButton
+                isOpen={isEditorOpen}
+                onClick={toggleEditor}
+              />
+            </Group>
           </Group>
         </Stack>
       )}
@@ -174,7 +188,7 @@ export const InteractiveQuestionResult = ({
             await onSave(question);
             closeSaveModal();
           }}
-          saveToCollection={saveToCollection}
+          targetCollection={targetCollection}
         />
       )}
     </FlexibleSizeComponent>
