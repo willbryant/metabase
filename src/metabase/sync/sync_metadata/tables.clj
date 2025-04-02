@@ -60,7 +60,7 @@
     #"^router.*"
     #"^semaphore$"
     #"^sequences$"
-    #"^sessions$"
+    ;; #"^sessions$" disable until https://github.com/metabase/metabase/issues/56120 is resolved
     #"^watchdog$"
     ;; Rails / Active Record
     #"^schema_migrations$"
