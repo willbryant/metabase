@@ -268,9 +268,6 @@ function formatNumberScientific(
   value: number,
   options: FormatNumberOptionsType,
 ) {
-  if (options.maximumFractionDigits) {
-    value = roundFloat(value, options.maximumFractionDigits);
-  }
   const exp = replaceNumberSeparators(
     value.toExponential(options.minimumFractionDigits),
     options?.number_separators,
