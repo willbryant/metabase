@@ -11,11 +11,11 @@
    [iapetos.collector :as collector]
    [iapetos.collector.ring :as collector.ring]
    [iapetos.core :as prometheus]
+   [iapetos.registry.collectors :as collectors]
    [jvm-alloc-rate-meter.core :as alloc-rate-meter]
    [jvm-hiccup-meter.core :as hiccup-meter]
    [metabase.analytics.settings :refer [prometheus-server-port]]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
-   [metabase.server.core :as server]
    [metabase.util :as u]
    [metabase.util.i18n :refer [trs]]
    [metabase.util.log :as log]
@@ -23,9 +23,12 @@
    [potemkin.types :as p.types]
    [ring.adapter.jetty :as ring-jetty])
   (:import
-   (io.prometheus.client Collector GaugeMetricFamily)
-   (io.prometheus.client.hotspot GarbageCollectorExports MemoryPoolsExports StandardExports ThreadExports)
-   (io.prometheus.client.jetty JettyStatisticsCollector)
+   (io.prometheus.client Collector GaugeMetricFamily SimpleCollector)
+   (io.prometheus.client.hotspot
+    GarbageCollectorExports
+    MemoryPoolsExports
+    StandardExports
+    ThreadExports)
    (java.util ArrayList List)
    (javax.management ObjectName)
    (org.eclipse.jetty.server Server)))
@@ -189,11 +192,41 @@
 
 (defn- jetty-collectors
   []
-  ;; when in dev you might not have a server setup
-  (when (server/instance)
-    [(collector/named {:namespace "metabase_webserver"
-                       :name      "jetty_stats"}
-                      (JettyStatisticsCollector. (.getHandler (server/instance))))]))
+  [(prometheus/counter :jetty/requests-total
+                       {:description "Number of requests"})
+   (prometheus/gauge :jetty/requests-active
+                     {:description "Number of requests currently active"})
+   (prometheus/gauge :jetty/requests-max
+                     {:description "Maximum number of requests that have been active at once"})
+   (prometheus/gauge :jetty/request-time-max-seconds
+                     {:description "Maximum time spent executing a request"})
+   (prometheus/counter :jetty/request-time-seconds-total
+                       {:description "Total time spent executing requests"})
+   (prometheus/counter :jetty/dispatched-total
+                       {:description "Number of requests handled"})
+   (prometheus/gauge :jetty/dispatched-active
+                     {:description "Number of active requests being handled"})
+   (prometheus/gauge :jetty/dispatched-active-max
+                     {:descrption "Maximum number of active requests handled"})
+   (prometheus/gauge :jetty/dispatched-time-max
+                     {:description "Maximum time spent dispatching a request"})
+   (prometheus/counter :jetty/dispatched-time-seconds-total
+                       {:descrption "Total time spent handling requests"})
+   (prometheus/counter :jetty/async-requests-total
+                       {:descrption "Totql number of async requests"})
+   (prometheus/gauge :jetty/async-requests-waiting
+                     {:description "Currently waiting async requests"})
+   (prometheus/gauge :jetty/async-requests-waiting-max
+                     {:description "Maximum number of waiting async requests"})
+   (prometheus/counter :jetty/async-dispatches-total
+                       {:description "Number of requests that have been asynchronously dispatched"})
+   (prometheus/counter :jetty/expires-total
+                       {:descpription "Number of async requests that have expired"})
+   (prometheus/counter :jetty/responses-total
+                       {:descrption "Total response grouped by status code"
+                        :labels [:code]})
+   (prometheus/counter :jetty/responses-bytes-total
+                       {:description "Total number of bytes across all responses"})])
 
 (defn- product-collectors
   []
@@ -226,12 +259,9 @@
    (prometheus/counter :metabase-search/index
                        {:description "Number of entries indexed for search"
                         :labels      [:model]})
-   (prometheus/counter :metabase-database/healthy
-                       {:description "Does a given database using driver pass a health check."
-                        :labels [:driver]})
-   (prometheus/counter :metabase-database/unhealthy
-                       {:description "Does a given database using driver fail a health check."
-                        :labels [:driver]})
+   (prometheus/gauge :metabase-database/status
+                     {:description "Does a given database using driver pass a health check."
+                      :labels [:driver :healthy :reason]})
    (prometheus/counter :metabase-search/index-error
                        {:description "Number of errors encountered when indexing for search"})
    (prometheus/counter :metabase-search/index-ms
@@ -292,6 +322,18 @@
    (prometheus/counter :metabase-gsheets/connection-deleted
                        {:description "How many times the instance has deleted their Google Sheets connection."})])
 
+(defn- quartz-collectors
+  []
+  [(prometheus/counter :metabase-tasks/quartz-tasks-executed
+                       {:description "How many tasks this metabase instance has executed by job-name and status"
+                        :labels [:status :job-name]})
+   (prometheus/histogram :metabase-tasks/quartz-tasks-execution-time-ms
+                         {:description "How long a task took to execute in ms by job-name and status"
+                          :labels [:status :job-name]})
+   (prometheus/gauge :metabase-tasks/quartz-tasks-states
+                     {:description "How many tasks are in a given state in the entire quartz cluster"
+                      :labels [:state]})])
+
 (defmulti known-labels
   "Implement this for a given metric to initialize it for the given set of label values."
   {:arglists '([metric]), :added "0.52.0"}
@@ -333,7 +375,8 @@
                         (concat (jvm-collectors)
                                 (jetty-collectors)
                                 [@c3p0-collector]
-                                (product-collectors)))]
+                                (product-collectors)
+                                (quartz-collectors)))]
     (doseq [{:keys [metric labels value]} (initial-labelled-metric-values)]
       (prometheus/inc registry metric (qualified-vals labels) value))
     (when @jvm-hiccup-thread (@jvm-hiccup-thread))
@@ -443,6 +486,13 @@
    (when-not system
      (setup!))
    (prometheus/set (:registry system) metric (qualified-vals labels) amount)))
+
+(defn clear!
+  "Call Collector.clear() on given metric."
+  [metric]
+  (when-not system
+    (setup!))
+  (.clear ^SimpleCollector (:raw (collectors/lookup (.-collectors ^iapetos.registry.IapetosRegistry (:registry system)) metric nil))))
 
 (comment
   ;; want to see what's in the registry?

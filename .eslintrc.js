@@ -6,7 +6,7 @@
 // can use this flag to enable it. This is set to true in CI
 const shouldLintCssModules =
   process.env.LINT_CSS_MODULES === "true" || process.env.CI;
-const plugins = ["react", "no-only-tests"];
+const plugins = ["react", "no-only-tests","ttag"];
 if (shouldLintCssModules) {
   plugins.push("postcss-modules");
 }
@@ -201,6 +201,8 @@ module.exports = {
         "e2e/**/*",
         "**/tests/*",
         "release/**/*",
+        "webpack.config.js",
+        "rspack.config.js",
       ],
       rules: {
         "no-color-literals": "off",

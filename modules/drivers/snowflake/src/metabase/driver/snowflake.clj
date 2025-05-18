@@ -38,7 +38,6 @@
    [metabase.util.i18n :refer [tru]]
    [metabase.util.json :as json]
    [metabase.util.log :as log]
-   [pangloss.transducers :as transducers]
    [ring.util.codec :as codec])
   (:import
    (java.io File)
@@ -56,7 +55,7 @@
                               :convert-timezone                       true
                               :datetime-diff                          true
                               :identifiers-with-spaces                true
-                              :describe-fields                        true
+                              :describe-fields                        false
                               :now                                    true}]
   (defmethod driver/database-supports? [:snowflake feature] [_driver _feature _db] supported?))
 
@@ -84,6 +83,8 @@
 
 (defn- handle-conn-uri [details user account private-key-file]
   (let [existing-conn-uri (or (:connection-uri details)
+                              (when-let [sub (:subname details)]
+                                (format "jdbc:snowflake:%s" sub))
                               (format "jdbc:snowflake://%s.snowflakecomputing.com" account))
         opts-str (sql-jdbc.common/additional-opts->string :url
                                                           {:user (codec/url-encode user)
@@ -91,8 +92,8 @@
         new-conn-uri (sql-jdbc.common/conn-str-with-additional-opts existing-conn-uri :url opts-str)]
     (-> details
         (assoc :connection-uri new-conn-uri)
-        ;; The Snowflake driver uses the :account property, but we need to drop the region from it first
-        (assoc :account (first (str/split account #"\."))))))
+        ;; The Snowflake driver uses the :account property, but we need to drop the region from it first (#30376 comment)
+        (m/assoc-some :account (some-> account (str/split #"\.") first)))))
 
 (defn- resolve-private-key
   "Convert the private-key secret properties into a private_key_file property in `details`.
@@ -144,7 +145,7 @@
                              (-> details
                                  ;; Setting private-key-value to nil will delete the secret
                                  (assoc :use-password true :private-key-value nil)
-                                 (dissoc :private-key-id :private-key-value :private-key-path :private-key-options)
+                                 (dissoc :private-key-id :private-key-path :private-key-options)
                                  ;; Add meta for testing
                                  (with-meta {:auth :password})))
           private-key-path-details (when private-key-path
@@ -191,12 +192,6 @@
     ;; https://support.snowflake.net/s/question/0D50Z00008WTOMCSA5/
     (-> (merge {:classname                                  "net.snowflake.client.jdbc.SnowflakeDriver"
                 :subprotocol                                "snowflake"
-                ;; see https://github.com/metabase/metabase/issues/22133
-                :subname                                    (let [base-url (if (and use-hostname (string? host) (not (str/blank? host)))
-                                                                             (cond-> host
-                                                                               (not= (last host) \/) (str "/"))
-                                                                             (str account ".snowflakecomputing.com/"))]
-                                                              (str "//" base-url))
                 :client_metadata_request_use_connection_ctx true
                 :ssl                                        true
                 ;; keep open connections open indefinitely instead of closing them. See #9674 and
@@ -210,6 +205,15 @@
                 ;; [[metabase.public-settings/start-of-week]] Setting.
                 :week_start                                 (start-of-week-setting->snowflake-offset)}
                (-> details
+                   ;; see https://github.com/metabase/metabase/issues/22133
+                   (update :subname (fn [subname]
+                                      (if subname
+                                        subname
+                                        (let [base-url (if (and use-hostname (string? host) (not (str/blank? host)))
+                                                         (cond-> host
+                                                           (not= (last host) \/) (str "/"))
+                                                         (str account ".snowflakecomputing.com/"))]
+                                          (str "//" base-url)))))
                    ;; original version of the Snowflake driver incorrectly used `dbname` in the details fields instead
                    ;; of `db`. If we run across `dbname`, correct our behavior
                    (set/rename-keys {:dbname :db})
@@ -808,95 +812,5 @@
   [_ database]
   (-> database :details :role))
 
-(defn- normalize-type*
-  [data-type]
-  (let [info (json/decode data-type)
-        raw-type (get info "type")]
-    (get {"FIXED" "NUMBER"
-          "TIMESTAMP_TZ" "TIMESTAMPTZ"
-          "TIMESTAMP_LTZ" "TIMESTAMPLTZ"
-          "TIMESTAMP_NTZ" "TIMESTAMPNTZ"
-          "TEXT" "VARCHAR"
-          "REAL" "DOUBLE"
-          "FLOAT" "DOUBLE"}
-         raw-type
-         raw-type)))
-
-(defn- assoc-database-required
-  [row]
-  (let [is-nullable? (= (:null? row) "true")
-        has-default? (boolean (:default row))
-        autoincrement? (:autoincrement row)
-        required? (not (or is-nullable? has-default? autoincrement?))]
-    (assoc row :database-required required?)))
-
-(defn- normalize-describe-fields-row
-  [row normalize-type]
-  (-> (m/remove-vals str/blank? row)
-      (m/update-existing :data_type normalize-type)
-      (update :autoincrement boolean)
-      (assoc-database-required)
-      (dissoc :kind :null? :database_name)
-      (set/rename-keys {:schema_name :table-schema
-                        :data_type :database-type
-                        :table_name :table-name
-                        :column_name :name
-                        :comment :field-comment
-                        :autoincrement :database-is-auto-increment})))
-
-(defmethod sql-jdbc.sync/describe-fields-pre-process-xf :snowflake
-  [driver db & {:keys [schema-names table-names] :as _args}]
-  (let [schema-names (set schema-names)
-        table-names (set table-names)
-        position-counter (volatile! {})
-        positioner (map (fn [{:keys [schema-name table-name] :as row}]
-                          (let [idx [schema-name table-name]
-                                pos (inc (get @position-counter idx -1))]
-                            (vswap! position-counter assoc idx pos)
-                            (assoc row :database-position pos))))
-        normalize-type (memoize normalize-type*)
-        pks (sql-jdbc.execute/do-with-connection-with-options
-             driver db nil
-             (fn [^java.sql.Connection conn]
-               (with-open [stmt (.prepareStatement conn (format "show primary keys in database \"%s\";" (get-in db [:details :db])))
-                           rset (.executeQuery stmt)]
-                 (into #{} (map (juxt :schema_name :table_name :column_name)) (resultset-seq rset)))))
-        normalize-row (comp
-                       (remove #(= (:schema_name %) "INFORMATION_SCHEMA"))
-                       (map #(normalize-describe-fields-row % normalize-type))
-                       positioner
-                       (map (fn [col]
-                              (let [lookup ((juxt :table-schema :table-name :name) col)
-                                    pk? (contains? pks lookup)]
-                                (assoc col :pk? pk?))))
-                       (transducers/sorted-by (juxt :table-schema :table-name :database-position)))]
-    (cond-> identity
-      ;; Add pre-filter to schemas and tables (schemas are checked first)
-      (seq schema-names)
-      (comp (filter #(contains? schema-names (:schema_name %))))
-
-      (seq table-names)
-      (comp (filter #(contains? table-names (:table_name %))))
-
-      :always
-      (comp normalize-row))))
-
-(defmethod sql-jdbc.sync/describe-fields-sql :snowflake
-  [driver {:keys [schema-names table-names details]}]
-  (let [has-one-schema? (= (count schema-names) 1)
-        has-one-table? (= (count table-names) 1)]
-    (cond
-      (and has-one-schema? has-one-table?)
-      [(format "show columns in table %s.%s.%s"
-               (sql.u/quote-name driver :database (:db details))
-               (sql.u/quote-name driver :schema (first schema-names))
-               (sql.u/quote-name driver :table (first table-names)))]
-
-      has-one-schema?
-      [(format "show columns in schema %s.%s"
-               (sql.u/quote-name driver :database (:db details))
-               (sql.u/quote-name driver :schema (first schema-names)))]
-
-      :else
-      [(format "show columns in database %s"
-               (sql.u/quote-name driver :database (:db details)))])))
+(defmethod sql-jdbc/impl-query-canceled? :snowflake [_ e]
+  (= (sql-jdbc/get-sql-state e) "57014"))

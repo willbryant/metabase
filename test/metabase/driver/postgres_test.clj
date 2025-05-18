@@ -20,7 +20,9 @@
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
    [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
    [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
+   [metabase.driver.sql-jdbc.sync.common :as sql-jdbc.sync.common]
    [metabase.driver.sql-jdbc.sync.describe-database :as sql-jdbc.describe-database]
+   [metabase.driver.sql-jdbc.sync.interface :as sql-jdbc.sync.interface]
    [metabase.driver.sql.query-processor :as sql.qp]
    [metabase.driver.sql.query-processor-test-util :as sql.qp-test-util]
    [metabase.lib.core :as lib]
@@ -1586,6 +1588,22 @@
                             "DROP ROLE privilege_rows_test_example_role;"]]
                 (jdbc/execute! conn-spec stmt)))))))))
 
+(deftest query-canceled?-test
+  (testing "Recognizes timeout exceptions from postgres"
+    (mt/test-driver :postgres
+      (mt/dataset test-data
+        (let [long-sleep-sql "select pg_sleep(5)"]
+          (sql-jdbc.execute/do-with-connection-with-options
+           :postgres (mt/db) nil
+           (fn [conn]
+             (with-open [stmt (sql-jdbc.sync.common/prepare-statement :postgres conn long-sleep-sql [])]
+               (try (doto stmt
+                      (.setQueryTimeout 1)
+                      (.execute))
+                    (throw (ex-info "Query successfully executed. Should sleep for 5s with a timeout of 1s" {}))
+                    (catch Throwable e
+                      (is (driver/query-canceled? :postgres e))))))))))))
+
 (deftest ^:parallel set-role-statement-test
   (testing "set-role-statement should return a SET ROLE command, with the role quoted if it contains special characters"
     ;; No special characters
@@ -1713,7 +1731,7 @@
       (doseq [main-string main-strings
               delimiter delimiters
               index indexes]
-        (testing (str "split part")
+        (testing "split part"
           (let [query (-> (lib/query mp (lib.metadata/table mp (mt/id :people)))
                           (lib/expression "SPLITPART" (lib/expression-clause :split-part [main-string delimiter index] nil))
                           (lib/limit 100))
@@ -2182,7 +2200,7 @@
     (let [mp (mt/metadata-provider)]
       (doseq [[table exprs] [[:people [(fn [] (lib/concat "2010" "-" "10" "-" "02"))]]]
               ef exprs]
-        (testing (str "casting custom expression to date")
+        (testing "casting custom expression to date"
           (let [query (-> (lib/query mp (lib.metadata/table mp (mt/id table)))
                           (lib/with-fields [])
                           (lib/expression "CUSTOMEXPR" (ef))
@@ -2213,3 +2231,18 @@
             (is (= :type/Date (-> cols first :base_type)))
             (doseq [[casted-value uncasted-value equals?] rows]
               (is equals? (str "Not equal for: " casted-value " " uncasted-value)))))))))
+
+(deftest have-select-privelege?-timeout-test
+  (mt/test-driver :postgres
+    (let [{schema :schema, table-name :name} (t2/select-one :model/Table (mt/id :checkins))]
+      (qp.store/with-metadata-provider (mt/id)
+        (testing "checking select privilege defaults to allow on timeout (#56737)"
+          (with-redefs [sql-jdbc.describe-database/simple-select-probe-query (constantly ["SELECT pg_sleep(3)"])]
+            (binding [sql-jdbc.describe-database/*select-probe-query-timeout-seconds* 1]
+              (sql-jdbc.execute/do-with-connection-with-options
+               driver/*driver*
+               (mt/db)
+               nil
+               (fn [^java.sql.Connection conn]
+                 (is (true? (sql-jdbc.sync.interface/have-select-privilege?
+                             driver/*driver* conn schema table-name))))))))))))

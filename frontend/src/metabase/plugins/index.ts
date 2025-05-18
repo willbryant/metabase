@@ -35,9 +35,11 @@ import type {
 } from "metabase/browse/models";
 import type { LinkProps } from "metabase/core/components/Link";
 import type { EmbeddingEntityType } from "metabase/embedding-sdk/store";
+import type { DataSourceSelectorProps } from "metabase/embedding-sdk/types/components/data-picker";
 import { getIconBase } from "metabase/lib/icon";
 import PluginPlaceholder from "metabase/plugins/components/PluginPlaceholder";
 import type { SearchFilterComponent } from "metabase/search/types";
+import { _FileUploadErrorModal } from "metabase/status/components/FileUploadStatusLarge/FileUploadErrorModal";
 import type { IconName, IconProps, StackProps } from "metabase/ui";
 import type Question from "metabase-lib/v1/Question";
 import type Database from "metabase-lib/v1/metadata/Database";
@@ -54,12 +56,14 @@ import type {
   CollectionId,
   CollectionInstanceAnaltyicsConfig,
   Dashboard,
+  DashboardId,
   Database as DatabaseType,
   Dataset,
   Group,
   GroupPermissions,
   GroupsPermissions,
   ModelCacheRefreshStatus,
+  ParameterId,
   Pulse,
   Revision,
   TableId,
@@ -530,6 +534,8 @@ export const PLUGIN_MODEL_PERSISTENCE = {
 export const PLUGIN_EMBEDDING = {
   isEnabled: () => false,
   isInteractiveEmbeddingEnabled: (_state: State) => false,
+  SimpleDataPicker: (_props: SimpleDataPickerProps) => null,
+  DataSourceSelector: (_props: DataSourceSelectorProps) => null,
 };
 
 export interface SimpleDataPickerProps {
@@ -543,7 +549,6 @@ export interface SimpleDataPickerProps {
 
 export const PLUGIN_EMBEDDING_SDK = {
   isEnabled: () => false,
-  SimpleDataPicker: (_props: SimpleDataPickerProps) => null,
 };
 
 export const PLUGIN_CONTENT_VERIFICATION = {
@@ -589,6 +594,7 @@ type GdriveConnectionModalProps = {
 };
 
 export const PLUGIN_UPLOAD_MANAGEMENT = {
+  FileUploadErrorModal: _FileUploadErrorModal,
   UploadManagementTable: PluginPlaceholder,
   GdriveSyncStatus: PluginPlaceholder,
   GdriveConnectionModal:
@@ -611,4 +617,17 @@ export const PLUGIN_RESOURCE_DOWNLOADS = {
     hide_download_button?: boolean | null;
     downloads?: boolean | null;
   }) => true,
+};
+
+export const PLUGIN_API = {
+  getRemappedCardParameterValueUrl: (
+    dashboardId: DashboardId,
+    parameterId: ParameterId,
+  ) =>
+    `/api/card/${dashboardId}/params/${encodeURIComponent(parameterId)}/remapping`,
+  getRemappedDashboardParameterValueUrl: (
+    dashboardId: DashboardId,
+    parameterId: ParameterId,
+  ) =>
+    `/api/dashboard/${dashboardId}/params/${encodeURIComponent(parameterId)}/remapping`,
 };

@@ -1,3 +1,33 @@
+## [0.54.10](https://github.com/metabase/metabase/compare/embedding-sdk-0.54.9...embedding-sdk-0.54.10) (2025-05-13)
+
+
+### Bug Fixes
+
+* **sdk:** custom GeoJSON maps does not load due to wrong domain ([#57539](https://github.com/metabase/metabase/issues/57539)) ([#57645](https://github.com/metabase/metabase/issues/57645)) ([d56bf23](https://github.com/metabase/metabase/commit/d56bf2351cddec077a09122d9f7e2bb47d958548))
+* **sdk:** manual fixes for module level ttag calls causing broken translations ([#57391](https://github.com/metabase/metabase/issues/57391)) ([#57589](https://github.com/metabase/metabase/issues/57589)) ([1b2fa2d](https://github.com/metabase/metabase/commit/1b2fa2d716fb5bfa63bfe3998b0beb4239a32f97))
+* **sdk:** updating collection's entity id crashes InteractiveQuestion and CollectionBrowser ([#57529](https://github.com/metabase/metabase/issues/57529)) ([#57642](https://github.com/metabase/metabase/issues/57642)) ([182a678](https://github.com/metabase/metabase/commit/182a678c3e022cb7e43b30891053681c5bed5a9c))
+
+
+
+## [0.54.9](https://github.com/metabase/metabase/compare/embedding-sdk-0.54.8...embedding-sdk-0.54.9) (2025-04-25)
+
+
+### Bug Fixes
+
+* **sdk:** clicking on "and X more" in chart legend throws error ([#57175](https://github.com/metabase/metabase/issues/57175)) ([#57251](https://github.com/metabase/metabase/issues/57251)) ([ae57a2d](https://github.com/metabase/metabase/commit/ae57a2d918e278fe887075a137622807bbdababd))
+* **sdk:** use background color in sankey chart text outline ([#57135](https://github.com/metabase/metabase/issues/57135)) ([#57168](https://github.com/metabase/metabase/issues/57168)) ([c5f5fa0](https://github.com/metabase/metabase/commit/c5f5fa0fcf34f388ad7f06e49171d00453e41e79))
+
+
+
+## [0.54.8](https://github.com/metabase/metabase/compare/embedding-sdk-0.54.7...embedding-sdk-0.54.8) (2025-04-24)
+
+
+### Bug Fixes
+
+* **sdk:** Ensure that questions don't flicker when fetching entity IDs ([#57073](https://github.com/metabase/metabase/issues/57073)) ([#57129](https://github.com/metabase/metabase/issues/57129)) ([1640558](https://github.com/metabase/metabase/commit/16405584d1b78c7c8f8ead4e6772194f29301e9e))
+
+
+
 ## [0.54.7](https://github.com/metabase/metabase/compare/embedding-sdk-0.54.6...embedding-sdk-0.54.7) (2025-04-23)
 
 

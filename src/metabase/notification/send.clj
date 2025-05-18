@@ -31,7 +31,10 @@
   :default    3
   :export?    false
   :type       :integer
-  :visibility :internal)
+  :visibility :internal
+  :doc "If Metabase stops sending notifications like alerts, it may be because long-running
+  queries are clogging the notification queue. You may be able to unclog the queue by
+  increasing the size of the thread pool dedicated to notifications.")
 
 (def ^:private default-retry-config
   {:max-attempts            (if config/is-dev? 2 7)
@@ -179,7 +182,7 @@
                             (channel-send-retrying! id payload_type handler message)))
                         (catch Exception e
                           (log/warnf e "Error sending to channel %s" (handler->channel-name handler))))))))
-              (do-after-notification-sent notification-info notification-payload)
+              (do-after-notification-sent hydrated-notification notification-payload)
               (log/info "Sent successfully")
               (prometheus/inc! :metabase-notification/send-ok {:payload-type payload_type}))))
         (catch Exception e

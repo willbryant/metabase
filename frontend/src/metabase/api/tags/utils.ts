@@ -27,6 +27,7 @@ import type {
   ModelIndex,
   NativeQuerySnippet,
   NotificationChannel,
+  ParameterId,
   PopularItem,
   RecentItem,
   Revision,
@@ -297,6 +298,12 @@ export function provideDashboardListTags(
   ];
 }
 
+export function provideParameterValuesTags(
+  parameterId: ParameterId,
+): TagDescription<TagType>[] {
+  return [idTag("parameter-values", parameterId)];
+}
+
 export function provideDashboardTags(
   dashboard: Dashboard,
 ): TagDescription<TagType>[] {
@@ -376,6 +383,16 @@ export function provideFieldDimensionTags(
 
 export function provideFieldValuesTags(id: FieldId): TagDescription<TagType>[] {
   return [idTag("field-values", id)];
+}
+
+export function provideRemappedFieldValuesTags(
+  id: FieldId,
+  searchFieldId: FieldId,
+): TagDescription<TagType>[] {
+  return [
+    ...provideFieldValuesTags(id),
+    ...provideFieldValuesTags(searchFieldId),
+  ];
 }
 
 export function provideNotificationListTags(
