@@ -9,6 +9,7 @@
    [metabase-enterprise.serialization.v2.backfill-ids :as serdes.backfill]
    [metabase.audit :as audit]
    [metabase.core.core :as mbc]
+   [metabase.db :as mdb]
    [metabase.models.serialization :as serdes]
    [metabase.permissions.models.data-permissions :as data-perms]
    [metabase.permissions.models.permissions-group :as perms-group]
@@ -26,6 +27,7 @@
   "Calls `ensure-audit-db-installed!` before and after `body` to ensure that the audit DB is installed and then
   restored if necessary. Also disables audit content loading if it is already loaded."
   `(let [audit-collection-exists?# (t2/exists? :model/Collection :type "instance-analytics")]
+     (clojure.pprint/print-table (t2/select [:model/Database :id :name]))
      (mt/with-temp-env-var-value! [mb-load-analytics-content (not audit-collection-exists?#)]
        (mbc/ensure-audit-db-installed!)
        (try
@@ -110,10 +112,11 @@
     (filter audit-db? trigger-keys)))
 
 (deftest no-sync-tasks-for-audit-db
+  ;; clear out the old audit-db instance so that a new one can setup triggers with the temp scheduler
+  (t2/delete! :model/Database :id audit/audit-db-id)
   (mt/with-temp-scheduler!
     (#'task.sync-databases/job-init)
     (with-audit-db-restoration
-      (ee-audit/ensure-audit-db-installed!)
       (is (= '("metabase.task.update-field-values.trigger.13371337")
              (get-audit-db-trigger-keys))
           "no sync scheduled after installation")
@@ -169,3 +172,56 @@
     (is (not (#'ee-audit/should-load-audit? false 3 5))))
   (testing "load-analytics-content is false + checksums do not match  => do not load"
     (is (not (#'ee-audit/should-load-audit? false 1 3)))))
+
+(deftest adjust-audit-db-to-source-test
+  (testing "adjust-audit-db-to-source! correctly handles tables and fields with mixed case"
+    ;; Pre-v55 this test does not make sense to run because the unique constraint on db_id, table_name, schema
+    ;; was case insensitive so we can't actually insert two tables with different casing of their name
+    (when-not (= :mysql (mdb/db-type))
+      (mt/with-temp [:model/Database {audit-db-id :id} {:engine "h2"}
+                     ;; Create tables with both uppercase and lowercase names
+                     :model/Table {upper-table-id :id} {:db_id audit-db-id
+                                                        :schema "public"
+                                                        :name "USERS"}
+                     :model/Table {lower-table-id :id} {:db_id audit-db-id
+                                                        :schema "public"
+                                                        :name "users"}
+                     ;; Create another table that doesn't have a lowercase version
+                     :model/Table {single-table-id :id} {:db_id audit-db-id
+                                                         :schema "public"
+                                                         :name "ORDERS"}
+                     ;; Create fields with both uppercase and lowercase names
+                     :model/Field {upper-field-id :id} {:table_id upper-table-id
+                                                        :name "EMAIL"}
+                     :model/Field {lower-field-id :id} {:table_id lower-table-id
+                                                        :name "email"}
+                     ;; Create another field that doesn't have a lowercase version
+                     :model/Field {single-field-id :id} {:table_id single-table-id
+                                                         :name "PRODUCT"}]
+
+        ;; Call the function we're testing
+        (#'ee-audit/adjust-audit-db-to-source! {:id audit-db-id})
+
+        (testing "Database engine should be set to postgres"
+          (is (= :postgres
+                 (t2/select-one-fn :engine :model/Database :id audit-db-id))))
+
+        (testing "Tables with existing lowercase versions should not be modified"
+          (is (= "USERS"
+                 (t2/select-one-fn :name :model/Table :id upper-table-id)))
+          (is (= "users"
+                 (t2/select-one-fn :name :model/Table :id lower-table-id))))
+
+        (testing "Tables without lowercase versions should be converted to lowercase"
+          (is (= "orders"
+                 (t2/select-one-fn :name :model/Table :id single-table-id))))
+
+        (testing "Fields with existing lowercase versions should not be modified"
+          (is (= "EMAIL"
+                 (t2/select-one-fn :name :model/Field :id upper-field-id)))
+          (is (= "email"
+                 (t2/select-one-fn :name :model/Field :id lower-field-id))))
+
+        (testing "Fields without lowercase versions should be converted to lowercase"
+          (is (= "product"
+                 (t2/select-one-fn :name :model/Field :id single-field-id))))))))
