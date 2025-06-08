@@ -17,7 +17,7 @@ export interface CurrencyOption {
   value: string;
 }
 
-export type CurrencyStyle = "symbol" | "code" | "name";
+export type CurrencyStyle = "symbol" | "code" | "name" | "symbol_native";
 
 export interface CurrencyStyleOption {
   name: string;
@@ -31,12 +31,19 @@ export interface CompactCurrencyOptions {
 
 let currencyMapCache: Record<string, CurrencyInfo>;
 
-export function getCurrencySymbol(currencyCode: string): string {
+export function getCurrencySymbol(
+  currencyCode: string,
+  isNative = false,
+): string {
   if (!currencyMapCache) {
     // only turn the array into a map if we call this function
     currencyMapCache = Object.fromEntries(currency);
   }
-  return currencyMapCache[currencyCode]?.symbol || currencyCode || "$";
+  const currencySymbol = isNative
+    ? currencyMapCache[currencyCode]?.symbol_native
+    : currencyMapCache[currencyCode]?.symbol;
+
+  return currencySymbol || currencyCode || "$";
 }
 
 export const COMPACT_CURRENCY_OPTIONS: CompactCurrencyOptions = {
@@ -44,7 +51,7 @@ export const COMPACT_CURRENCY_OPTIONS: CompactCurrencyOptions = {
   // wrong in some cases. Intl.NumberFormat has some of that data built-in, but
   // I couldn't figure out how to use it here.
   digits: 2,
-  currency_style: "symbol",
+  currency_style: "symbol_native",
 };
 
 export function getCurrencyStyleOptions(
@@ -53,6 +60,7 @@ export function getCurrencyStyleOptions(
   const symbol = getCurrencySymbol(currency);
   const code = getCurrency(currency, "code");
   const name = getCurrency(currency, "name");
+  const symbol_native = getCurrencySymbol(currency, true);
   return [
     ...(symbol !== code
       ? [
@@ -69,6 +77,10 @@ export function getCurrencyStyleOptions(
     {
       name: t`Name` + ` ` + `(${name})`,
       value: "name" as const,
+    },
+    {
+      name: t`Local Symbol` + ` ` + `(${symbol_native})`,
+      value: "symbol_native" as const,
     },
   ];
 }
