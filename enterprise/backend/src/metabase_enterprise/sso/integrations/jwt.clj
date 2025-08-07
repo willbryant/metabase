@@ -107,8 +107,7 @@
                          (catch Throwable e
                            (throw
                             (ex-info (ex-message e)
-                                     {:status      "error-jwt-bad-unsigning"
-                                      :status-code 401}))))
+                                     {:status-code 401}))))
           login-attrs  (jwt-data->login-attributes jwt-data)
           email        (get jwt-data (jwt-attribute-email))
           first-name   (get jwt-data (jwt-attribute-firstname))
@@ -117,6 +116,11 @@
           session      (session/create-session! :sso user (request/device-info request))]
       (sync-groups! user jwt-data)
       {:session session, :redirect-url redirect-url, :jwt-data jwt-data})))
+
+(defn jwt->session
+  "Given a JWT, return a valid session token for the associated user (creating the user if necessary)."
+  [jwt request]
+  (-> (session-data jwt request) :session :key))
 
 (defn- throw-react-sdk-embedding-disabled
   []
@@ -128,7 +132,7 @@
 (defn- throw-simple-embedding-disabled
   []
   (throw
-   (ex-info (tru "Simple Embedding is disabled. Enable it in the embedding settings.")
+   (ex-info (tru "Embedded Analytics JS is disabled. Enable it in the embedding settings.")
             {:status      "error-embedding-simple-disabled"
              :status-code 402})))
 
