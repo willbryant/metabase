@@ -5,6 +5,7 @@ import { P, isMatching } from "ts-pattern";
 import _ from "underscore";
 
 import { setupEnterprisePlugins } from "__support__/enterprise";
+import { setupDatabaseListEndpoint } from "__support__/server-mocks";
 import { mockSettings } from "__support__/settings";
 import {
   act,
@@ -15,6 +16,7 @@ import {
 } from "__support__/ui";
 import { logout } from "metabase/auth/actions";
 import * as domModule from "metabase/lib/dom";
+import { downloadObjectAsJson } from "metabase/lib/download";
 import { useRegisterMetabotContextProvider } from "metabase/metabot";
 import {
   type MockStreamedEndpointParams,
@@ -24,6 +26,7 @@ import {
 } from "metabase-enterprise/api/ai-streaming/test-utils";
 import type { User } from "metabase-types/api";
 import {
+  createMockDatabase,
   createMockTokenFeatures,
   createMockUser,
 } from "metabase-types/api/mocks";
@@ -48,6 +51,10 @@ import {
   metabotReducer,
   setVisible,
 } from "./state";
+
+jest.mock("metabase/lib/download", () => ({
+  downloadObjectAsJson: jest.fn(),
+}));
 
 const mockAgentEndpoint = (params: MockStreamedEndpointParams) =>
   mockStreamedEndpoint("/api/ee/metabot-v3/v2/agent-streaming", params);
@@ -83,6 +90,7 @@ function setup(
     `path:/api/ee/metabot-v3/metabot/${FIXED_METABOT_IDS.DEFAULT}/prompt-suggestions`,
     { prompts: promptSuggestions, offset: 0, limit: 3, total: 3 },
   );
+  setupDatabaseListEndpoint([]);
 
   return renderWithProviders(<MetabotProvider>{ui}</MetabotProvider>, {
     storeInitialState: createMockState({
@@ -273,6 +281,41 @@ describe("metabot-streaming", () => {
       expect(heading).toHaveTextContent(`You, but don't tell anyone.`);
     });
 
+    it("should present the user an option to provide feedback", async () => {
+      setup();
+      mockAgentEndpoint({ textChunks: whoIsYourFavoriteResponse });
+
+      await enterChatMessage("Who is your favorite?");
+      const lastMessage = await lastChatMessage();
+      expect(lastMessage).toHaveTextContent(/You, but don't tell anyone./);
+
+      const feedbackModal = () => screen.findByTestId("metabot-feedback-modal");
+      const thumbsUp = () =>
+        within(lastMessage!).findByTestId("metabot-chat-message-thumbs-up");
+      const thumbsDown = () =>
+        within(lastMessage!).findByTestId("metabot-chat-message-thumbs-down");
+      const mockDownloadObjectAsJson =
+        downloadObjectAsJson as jest.MockedFunction<
+          typeof downloadObjectAsJson
+        >;
+
+      expect(await thumbsUp()).toBeInTheDocument();
+      expect(await thumbsDown()).toBeInTheDocument();
+      await userEvent.click(await thumbsDown());
+
+      expect(await feedbackModal()).toBeInTheDocument();
+      await userEvent.click(
+        await within(await feedbackModal()).findByRole("button", {
+          name: /Download/,
+        }),
+      );
+
+      expect(mockDownloadObjectAsJson).toHaveBeenCalledTimes(1);
+
+      expect(await thumbsUp()).toBeDisabled();
+      expect(await thumbsDown()).toBeDisabled();
+    });
+
     it("should present the user an option to retry a response", async () => {
       setup();
       mockAgentEndpoint({ textChunks: whoIsYourFavoriteResponse });
@@ -422,7 +465,7 @@ describe("metabot-streaming", () => {
         setup({ promptSuggestions: [] });
         await waitFor(async () => {
           expect(
-            fetchMock.calls(
+            fetchMock.callHistory.calls(
               `path:/api/ee/metabot-v3/metabot/1/prompt-suggestions`,
             ),
           ).toHaveLength(1);
@@ -432,7 +475,7 @@ describe("metabot-streaming", () => {
 
         await waitFor(async () => {
           expect(
-            fetchMock.calls(
+            fetchMock.callHistory.calls(
               `path:/api/ee/metabot-v3/metabot/1/prompt-suggestions`,
             ),
           ).toHaveLength(2);
@@ -729,6 +772,32 @@ describe("metabot-streaming", () => {
           (await lastReqBody(agentSpy))?.context,
         ),
       ).toEqual(true);
+    });
+
+    it("should send along available actions in context", async () => {
+      setup();
+      fetchMock.removeRoutes({ names: ["database-list"] });
+      setupDatabaseListEndpoint([
+        createMockDatabase({
+          is_saved_questions: false,
+          native_permissions: "none",
+        }),
+      ]);
+
+      const agentSpy = mockAgentEndpoint({
+        textChunks: whoIsYourFavoriteResponse,
+      });
+
+      await enterChatMessage("Who is your favorite?");
+
+      expect(
+        _.pick((await lastReqBody(agentSpy))?.context, "capabilities"),
+      ).toEqual({
+        capabilities: [
+          "frontend:navigate_user_v1",
+          "permission:save_questions",
+        ],
+      });
     });
 
     it("should allow components to register additional context", async () => {

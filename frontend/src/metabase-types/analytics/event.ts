@@ -214,7 +214,8 @@ export type DashboardFilterMovedEvent = ValidateEvent<{
 export type SdkIframeEmbedSetupExperience =
   | "dashboard"
   | "chart"
-  | "exploration";
+  | "exploration"
+  | "browser";
 
 export type EmbedWizardExperienceSelectedEvent = ValidateEvent<{
   event: "embed_wizard_experience_selected";
@@ -239,6 +240,16 @@ export type EmbedWizardAuthSelectedEvent = ValidateEvent<{
 
 export type EmbedWizardCodeCopiedEvent = ValidateEvent<{
   event: "embed_wizard_code_copied";
+}>;
+
+export type ConnectionStringParsedSuccessEvent = ValidateEvent<{
+  event: "connection_string_parsed_success";
+  triggered_from: "admin" | "setup" | "embedding_setup";
+}>;
+
+export type ConnectionStringParsedFailedEvent = ValidateEvent<{
+  event: "connection_string_parsed_failed";
+  triggered_from: "admin" | "setup" | "embedding_setup";
 }>;
 
 export type EmbedWizardEvent =
@@ -277,4 +288,6 @@ export type SimpleEvent =
   | AddDataModalTabEvent
   | DashboardFilterCreatedEvent
   | DashboardFilterMovedEvent
-  | EmbedWizardEvent;
+  | EmbedWizardEvent
+  | ConnectionStringParsedSuccessEvent
+  | ConnectionStringParsedFailedEvent;

@@ -1057,69 +1057,99 @@
 ;; API tests are in [[metabase.actions.api-test]]
 (deftest ^:parallel actions-maybe-parse-sql-violate-not-null-constraint-test
   (testing "violate not null constraint"
-    (is (= {:type :metabase.actions.error/violate-not-null-constraint,
-            :message "Ranking must have values."
-            :errors {"ranking" "You must provide a value."}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/violate-not-null-constraint nil :model.row/created
-            "ERROR: null value in column \"ranking\" violates not-null constraint\n  Detail: Failing row contains (3, admin, null).")))))
+    (is (=? {:type :metabase.actions.error/violate-not-null-constraint,
+             :message "Ranking must have values."
+             :errors {"ranking" "You must provide a value."}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/violate-not-null-constraint nil :model.row/created
+             "ERROR: null value in column \"ranking\" violates not-null constraint\n  Detail: Failing row contains (3, admin, null).")))))
 
 (deftest ^:parallel actions-maybe-parse-sql-violate-not-null-constraint-test-2
   (testing "violate not null constraint"
-    (is (= {:type :metabase.actions.error/violate-not-null-constraint,
-            :message "Ranking must have values."
-            :errors {"ranking" "You must provide a value."}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/violate-not-null-constraint nil :model.row/created
-            "ERROR: null value in column \"ranking\" of relation \"group\" violates not-null constraint\n  Detail: Failing row contains (57, admin, null).")))))
+    (is (=? {:type :metabase.actions.error/violate-not-null-constraint,
+             :message "Ranking must have values."
+             :errors {"ranking" "You must provide a value."}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/violate-not-null-constraint nil :model.row/created
+             "ERROR: null value in column \"ranking\" of relation \"group\" violates not-null constraint\n  Detail: Failing row contains (57, admin, null).")))))
 
 (deftest actions-maybe-parse-sql-error-violate-unique-constraint-test
   (testing "violate unique constraint"
     (with-redefs [postgres.actions/constraint->column-names (constantly ["ranking"])]
-      (is (= {:type :metabase.actions.error/violate-unique-constraint,
-              :message "Ranking already exists.",
-              :errors {"ranking" "This Ranking value already exists."}}
-             (sql-jdbc.actions/maybe-parse-sql-error
-              :postgres actions.error/violate-unique-constraint nil nil
-              "Batch entry 0 UPDATE \"public\".\"group\" SET \"ranking\" = CAST(2 AS INTEGER) WHERE \"public\".\"group\".\"id\" = 1 was aborted: ERROR: duplicate key value violates unique constraint \"group_ranking_key\"\n  Detail: Key (ranking)=(2) already exists.  Call getNextException to see other errors in the batch."))))))
+      (is (=? {:type :metabase.actions.error/violate-unique-constraint,
+               :message "Ranking already exists.",
+               :errors {"ranking" "This Ranking value already exists."}}
+              (sql-jdbc.actions/maybe-parse-sql-error
+               :postgres actions.error/violate-unique-constraint nil nil
+               "Batch entry 0 UPDATE \"public\".\"group\" SET \"ranking\" = CAST(2 AS INTEGER) WHERE \"public\".\"group\".\"id\" = 1 was aborted: ERROR: duplicate key value violates unique constraint \"group_ranking_key\"\n  Detail: Key (ranking)=(2) already exists.  Call getNextException to see other errors in the batch."))))))
 
 (deftest ^:parallel actions-maybe-parse-sql-error-incorrect-type-test
   (testing "incorrect type"
-    (is (= {:type :metabase.actions.error/incorrect-value-type,
-            :message "Some of your values aren’t of the correct type for the database.",
-            :errors {}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/incorrect-value-type nil nil
-            "Batch entry 0 UPDATE \"public\".\"group\" SET \"ranking\" = CAST('S' AS INTEGER) WHERE \"public\".\"group\".\"id\" = 1 was aborted: ERROR: invalid input syntax for type integer: \"S\"  Call getNextException to see other errors in the batch.")))))
+    (is (=? {:type :metabase.actions.error/incorrect-value-type,
+             :message "Some of your values aren’t of the correct type for the database.",
+             :errors {}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/incorrect-value-type nil nil
+             "Batch entry 0 UPDATE \"public\".\"group\" SET \"ranking\" = CAST('S' AS INTEGER) WHERE \"public\".\"group\".\"id\" = 1 was aborted: ERROR: invalid input syntax for type integer: \"S\"  Call getNextException to see other errors in the batch.")))))
 
 (deftest ^:parallel actions-maybe-parse-sql-error-violate-fk-constraints-test
   (testing "violate fk constraints"
-    (is (= {:type :metabase.actions.error/violate-foreign-key-constraint,
-            :message "Unable to create a new record.",
-            :errors {"group-id" "This Group-id does not exist."}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/violate-foreign-key-constraint nil :model.row/create
-            "ERROR: insert or update on table \"user\" violates foreign key constraint \"user_group-id_group_-159406530\"\n  Detail: Key (group-id)=(999) is not present in table \"group\".")))))
+    (is (=? {:type :metabase.actions.error/violate-foreign-key-constraint,
+             :message "Unable to create a new record.",
+             :errors {"group-id" "This Group-id does not exist."}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/violate-foreign-key-constraint nil :model.row/create
+             "ERROR: insert or update on table \"user\" violates foreign key constraint \"user_group-id_group_-159406530\"\n  Detail: Key (group-id)=(999) is not present in table \"group\".")))))
 
 (deftest ^:parallel actions-maybe-parse-sql-error-violate-fk-constraints-test-2
   (testing "violate fk constraints"
-    (is (= {:type :metabase.actions.error/violate-foreign-key-constraint,
-            :message "Unable to update the record.",
-            :errors {"id" "This Id does not exist."}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/violate-foreign-key-constraint nil :model.row/update
-            "ERROR: update or delete on table \"group\" violates foreign key constraint \"user_group-id_group_-159406530\" on table \"user\"\n  Detail: Key (id)=(1) is still referenced from table \"user\".")))))
+    (is (=? {:type :metabase.actions.error/violate-foreign-key-constraint,
+             :message "Unable to update the record.",
+             :errors {"id" "This Id does not exist."}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/violate-foreign-key-constraint nil :model.row/update
+             "ERROR: update or delete on table \"group\" violates foreign key constraint \"user_group-id_group_-159406530\" on table \"user\"\n  Detail: Key (id)=(1) is still referenced from table \"user\".")))))
 
 (deftest ^:parallel actions-maybe-parse-sql-error-violate-fk-constraints-test-3
   (testing "violate fk constraints"
-    (is (= {:type :metabase.actions.error/violate-foreign-key-constraint,
-            :message "Other tables rely on this row so it cannot be deleted.",
-            :errors {}}
-           (sql-jdbc.actions/maybe-parse-sql-error
-            :postgres actions.error/violate-foreign-key-constraint nil :model.row/delete
-            "ERROR: update or delete on table \"group\" violates foreign key constraint \"user_group-id_group_-159406530\" on table \"user\"\n  Detail: Key (id)=(1) is still referenced from table \"user\".")))))
+    (is (=? {:type :metabase.actions.error/violate-foreign-key-constraint,
+             :message "Other tables rely on this row so it cannot be deleted.",
+             :errors {}}
+            (sql-jdbc.actions/maybe-parse-sql-error
+             :postgres actions.error/violate-foreign-key-constraint nil :model.row/delete
+             "ERROR: update or delete on table \"group\" violates foreign key constraint \"user_group-id_group_-159406530\" on table \"user\"\n  Detail: Key (id)=(1) is still referenced from table \"user\".")))))
 
-;; this contains specical tests case for postgres
+;; this contains special tests case for postgres
+;; for generic tests, check [[metabase.driver.sql-jdbc.actions-test/action-error-handling-test]]
+(deftest check-constraint-test
+  (mt/test-driver :postgres
+    (testing "violate check constraints"
+      (tx/drop-if-exists-and-create-db! driver/*driver* "check-constraint-test")
+      (let [details (mt/dbdef->connection-details :postgres :db {:database-name "check-constraint-test"})]
+        (doseq [stmt ["CREATE TABLE test_users (
+                        id serial PRIMARY KEY,
+                        email VARCHAR(255) NOT NULL,
+                        age INTEGER,
+                        CONSTRAINT email_format_check CHECK (email ~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$')
+                      );"]]
+          (jdbc/execute! (sql-jdbc.conn/connection-details->spec :postgres details) [stmt]))
+        (mt/with-temp [:model/Database database {:engine driver/*driver* :details details}]
+          (mt/with-db database
+            (sync/sync-database! database)
+            (mt/with-actions-enabled
+              (testing "when creating with invalid email"
+                (is (=? {:errors      {}
+                         :message     "Some of your values violate the constraint: email_format_check"
+                         :status-code 400
+                         :type        actions.error/violate-check-constraint}
+                        (sql-jdbc.actions-test/perform-action-ex-data
+                         :model.row/create (mt/$ids {:create-row {"email" "invalid-email"
+                                                                  "age"   25}
+                                                     :database   (:id database)
+                                                     :query      {:source-table $$test_users}
+                                                     :type       :query}))))))))))))
+
+;; this contains special tests case for postgres
 ;; for generic tests, check [[metabase.driver.sql-jdbc.actions-test/action-error-handling-test]]
 (deftest action-error-handling-test
   (mt/test-driver :postgres
@@ -1730,3 +1760,19 @@
                (fn [^java.sql.Connection conn]
                  (is (true? (sql-jdbc.sync.interface/have-select-privilege?
                              driver/*driver* conn schema table-name))))))))))))
+
+(deftest ^:parallel null-array-query-test
+  (testing "queries with nulls in arrays should be returned in a readable format"
+    (mt/test-driver :postgres
+      (is (= [[[nil]
+               [nil nil]
+               [1 nil 3]
+               [[nil]]
+               [[nil] [nil]]
+               [[1 nil] [nil 2]]]]
+             (->> (mt/native-query {:query "select array[null], array[null, null],
+                                            array[1, null, 3], array[array[null]],
+                                            array[array[null], array[null]],
+                                            array[array[1, null], array[null, 2]]"})
+                  mt/process-query
+                  mt/rows))))))

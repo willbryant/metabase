@@ -72,7 +72,9 @@
 
   activity-feed
   {:team "Admin Webapp"
-   :api  #{metabase.activity-feed.api metabase.activity-feed.init}
+   :api  #{metabase.activity-feed.api
+           metabase.activity-feed.init
+           metabase.activity-feed.models.recent-views}
    :uses #{api
            app-db
            collections
@@ -296,6 +298,7 @@
            models
            premium-features
            settings
+           store-api
            task
            util}}
 
@@ -1029,9 +1032,11 @@
           metabase.search.appdb.scoring
           metabase.search.config
           metabase.search.core
+          metabase.search.engine
           metabase.search.in-place.scoring
           metabase.search.ingestion
           metabase.search.init
+          metabase.search.scoring
           metabase.search.spec}
    :uses #{analytics
            api
@@ -1170,6 +1175,14 @@
   {:team "DevEx"
    :api  #{metabase.startup.core}
    :uses #{util}}
+
+  store-api
+  {:team "Cloud"
+   :api  #{metabase.store-api.core
+           metabase.store-api.init}
+   :uses #{config
+           settings
+           util}}
 
   sync
   {:team "Querying"
@@ -1519,6 +1532,7 @@
            premium-features
            enterprise/advanced-config
            enterprise/scim
+           enterprise/semantic-search
            enterprise/sso}}
 
   enterprise/api
@@ -1535,6 +1549,7 @@
            app-db
            audit-app
            classloader
+           config
            driver
            lib
            models
@@ -1569,6 +1584,15 @@
            query-processor
            task
            util}}
+
+  enterprise/cloud-add-ons
+  {:team "Cloud"
+   :api  #{metabase-enterprise.cloud-add-ons.api}
+   :uses #{api
+           events
+           premium-features
+           util
+           enterprise/harbormaster}}
 
   enterprise/content-translation
   {:team "Admin Webapp"
@@ -1659,7 +1683,7 @@
   {:team "Cloud"
    :api  #{metabase-enterprise.harbormaster.client}
    :uses #{api
-           cloud-migration
+           store-api
            util}}
 
   enterprise/impersonation
@@ -1685,7 +1709,8 @@
   enterprise/llm
   {:team "Metabot"
    :api  #{metabase-enterprise.llm.api
-           metabase-enterprise.llm.init}
+           metabase-enterprise.llm.init
+           metabase-enterprise.llm.settings}
    :uses #{analytics
            analyze
            api
@@ -1697,6 +1722,7 @@
   enterprise/metabot-v3
   {:team "Metabot"
    :api #{metabase-enterprise.metabot-v3.api
+          metabase-enterprise.metabot-v3.client
           metabase-enterprise.metabot-v3.core
           metabase-enterprise.metabot-v3.init
           metabase-enterprise.metabot-v3.tools.api}
@@ -1716,6 +1742,7 @@
            request
            server
            settings
+           sync
            system
            users
            util
@@ -1782,6 +1809,27 @@
    :api  #{}
    :uses #{premium-features
            search}}
+
+  enterprise/semantic-search
+  {:team "Metabot"
+   :api  #{metabase-enterprise.semantic-search.api
+           metabase-enterprise.semantic-search.core
+           metabase-enterprise.semantic-search.init}
+   :uses #{activity-feed
+           analytics
+           api
+           app-db
+           config
+           connection-pool
+           models
+           permissions
+           premium-features
+           search
+           settings
+           task
+           util
+           enterprise/llm
+           enterprise/metabot-v3}}
 
   enterprise/serialization
   {:team "Workflows"

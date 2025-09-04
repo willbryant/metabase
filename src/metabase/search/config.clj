@@ -85,7 +85,9 @@
     :text                5
     :mine                1
     :exact               5
-    :prefix              0}
+    :prefix              0
+    ;; TODO figure out a better way to blend these scorers with wildly different scale.
+    :rrf                 5000}
    :command-palette
    {:prefix               5
     :model/collection     1
@@ -161,8 +163,9 @@
   {:default         {:archived               false
                      ;; keys will typically those in [[filters]], but this is an atypical filter.
                      ;; we plan to generify it, by precalculating it on the index.
-                     :personal-collection-id "all"}
-   :command-palette {:personal-collection-id "exclude-others"}})
+                     :filter-items-in-personal-collection "all"}
+   :search-app      {:filter-items-in-personal-collection "exclude-others"}
+   :command-palette {:filter-items-in-personal-collection "exclude-others"}})
 
 (defn filter-default
   "Get the default value for the given filter in the given context. Is non-contextual for legacy search."

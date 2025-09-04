@@ -31,10 +31,12 @@
                               :ai-sql-fixer
                               :ai-sql-generation
                               :no-upsell
+                              :offer-metabase-ai
                               :official-collections
                               :query-reference-validation
                               :sandboxes
                               :scim
+                              :semantic-search
                               :serialization
                               :session-timeout-config
                               :snippet-collections
@@ -70,10 +72,12 @@
             :ai_entity_analysis             true
             :ai_sql_fixer                   true
             :ai_sql_generation              true
+            :offer_metabase_ai              true
             :official_collections           true
             :query_reference_validation     true
             :sandboxes                      true
             :scim                           true
+            :semantic_search                true
             :serialization                  true
             :session_timeout_config         true
             :snippet_collections            true

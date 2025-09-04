@@ -259,6 +259,10 @@
   "Should Metabase do AI analysis on entities?"
   :ai-entity-analysis)
 
+(define-premium-feature ^{:added "0.55.0"} offer-metabase-ai?
+  "Offer Metabase AI add-on"
+  :offer-metabase-ai)
+
 (define-premium-feature ^{:added "0.56.0"} cloud-custom-smtp?
   "Can Metabase have a custom smtp details separate from the default Cloud details."
   :cloud-custom-smtp)
@@ -270,6 +274,10 @@
 (define-premium-feature ^{:added "0.56.0"} enable-etl-connections-pg?
   "Does the Metabase Cloud instance have ETL connections with PG?"
   :etl-connections-pg)
+
+(define-premium-feature ^{:added "0.56.0"} enable-semantic-search?
+  "Should we enable the semantic search backend?"
+  :semantic-search)
 
 (define-premium-feature ^{:added "0.57.0"} table-data-editing?
   "Should we allow users to edit the data within tables?"
@@ -304,10 +312,12 @@
    :hosting                        (is-hosted?)
    :llm_autodescription            (enable-llm-autodescription?)
    :metabot_v3                     (enable-metabot-v3?)
+   :offer_metabase_ai              (offer-metabase-ai?)
    :official_collections           (enable-official-collections?)
    :query_reference_validation     (enable-query-reference-validation?)
    :sandboxes                      (enable-sandboxes?)
    :scim                           (enable-scim?)
+   :semantic_search                (enable-semantic-search?)
    :serialization                  (enable-serialization?)
    :session_timeout_config         (enable-session-timeout-config?)
    :snippet_collections            (enable-snippet-collections?)
