@@ -297,9 +297,10 @@
 (defn- collection-metrics
   "Get metrics on Collection usage."
   []
-  (let [collections (t2/select :model/Collection {:where (mi/exclude-internal-content-hsql :model/Collection)})
-        cards       (t2/select [:model/Card :collection_id :card_schema] {:where (mi/exclude-internal-content-hsql :model/Card)})]
-    {:collections              (count collections)
+  (let [collections (t2/count :model/Collection {:where (mi/exclude-internal-content-hsql :model/Collection)})
+        cards       (t2/select [:model/Card :collection_id :card_schema] {:where
+                                                                          [:and (mi/exclude-internal-content-hsql :model/Card)]})]
+    {:collections              collections
      :cards_in_collections     (count (filter :collection_id cards))
      :cards_not_in_collections (count (remove :collection_id cards))
      :num_cards_per_collection (medium-histogram cards :collection_id)}))
@@ -346,6 +347,11 @@
   "Get metrics based on Segments."
   []
   {:segments (t2/count :model/Segment)})
+
+(defn- metric-metrics
+  "Get metrics based on Metrics."
+  []
+  {:metrics (t2/count :model/Card :type :metric :archived false)})
 
 ;;; Execution Metrics
 
@@ -474,6 +480,7 @@
                       :execution  (execution-metrics)
                       :field      (field-metrics)
                       :group      (group-metrics)
+                      :metric     (metric-metrics)
                       :pulse      (pulse-metrics)
                       :alert      (alert-metrics)
                       :question   (question-metrics)

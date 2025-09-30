@@ -68,7 +68,9 @@ You can also ask Metabot to tell you about specific tables in your database.
 
 ## How Metabot uses the query builder
 
-When you ask Metabot to create a chart from natural language, it first looks for existing questions that might answer your request. If it finds a relevant question, it'll point you to that instead of creating something new. Otherwise, Metabot will use the [query builder](../questions/query-builder/editor.md) to create a new chart for you. Keep in mind that Metabot can only handle basic query builder operations. It's limited to single-level aggregation and grouping, so if you need more complex analysis, you can take over and refine the query yourself, or switch to the native editor.
+When you ask Metabot to create a chart from natural language, it first looks for existing questions that might answer your request. If it finds a relevant question, it'll point you to that instead of creating something new. Otherwise, Metabot will use the [query builder](../questions/query-builder/editor.md) to create a new chart for you. 
+
+Keep in mind that Metabot is still learning the query builder. Metabot can only handle basic query builder operations, and it lacks access to the library of [custom expressions](../questions/query-builder/expressions-list.md). Metabot is also limited to single-level aggregation and grouping, so if you need more complex analysis, you can take over and refine the query yourself, or switch to the SQL editor.
 
 ## Metabot in the native editor
 
@@ -81,7 +83,7 @@ To have Metabot generate SQL for you:
 3. Type cmd+b on Mac, ctrl+b on Windows, to open up the [chat sidebar](#the-metabot-chat-sidebar).
 4. Ask it to "Write a SQL query that..." and type your prompt.
 
-Metabot will generate the SQL for you, but it won't run the query. This gives you a chance to inspect the code before running it. The native editor is designed to be read-only (so don't worry about Metabot dropping any tables), but you should still check the query to make sure it targets the data you want.
+Metabot will generate the SQL for you, but it won't run the query. This gives you a chance to inspect the code before running it.
 
 If you don't specify a specific table in a natural language question, Metabot will only check the first 100 tables in the currently selected database. If your question pertains to tables other than those first 100 tables, Metabot may hallucinate the tables it needs, and the query will fail.
 

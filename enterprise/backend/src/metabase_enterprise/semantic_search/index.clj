@@ -105,6 +105,17 @@
 
     :else (Instant/ofEpochMilli (inst-ms document-timestamp))))
 
+(defn- to-boolean
+  "MySQL booleans are represented as 0/1, so we must ensure we're casting them to
+   real booleans when inserting them into our postgres db"
+  [b]
+  {:pre [(some? b)]}
+  (cond
+    (boolean? b) b
+    (= 0 b) false
+    (= 1 b) true
+    :else (throw (ex-info "Unexpected boolean value" {:v b}))))
+
 (defn- doc->db-record
   "Convert a document to a database record with a provided embedding."
   [embedding-vec {:keys [model id searchable_text created_at creator_id updated_at
@@ -116,13 +127,13 @@
    :creator_id          creator_id
    :database_id         database_id
    :last_editor_id      last_editor_id
-   :name                (:name doc)
+   :name                (or (:name doc) "")
    :content             searchable_text
    :display_type        display_type
-   :archived            archived
-   :official_collection official_collection
-   :pinned              pinned
-   :verified            verified
+   :archived            (some-> archived to-boolean)
+   :official_collection (some-> official_collection to-boolean)
+   :pinned              (some-> pinned to-boolean)
+   :verified            (some-> verified to-boolean)
    :dashboardcard_count dashboardcard_count
    :view_count          view_count
    :model_created_at    (some-> created_at to-instant)
@@ -134,18 +145,18 @@
    :text_search_vector  (if (:name doc)
                           [:||
                            (search/weighted-tsvector "A" (:name doc))
-                           (search/weighted-tsvector "B" (:searchable_text doc ""))]
-                          (search/weighted-tsvector "A" (:searchable_text doc "")))
+                           (search/weighted-tsvector "B" (or (:searchable_text doc) ""))]
+                          (search/weighted-tsvector "A" (or (:searchable_text doc) "")))
    :text_search_with_native_query_vector
    (if (:name doc)
      [:||
       (search/weighted-tsvector "A" (:name doc))
       (search/weighted-tsvector "B"
-                                (str/join " " (remove str/blank? [(:searchable_text doc "")
-                                                                  (:native_query doc "")])))]
+                                (str/join " " (remove str/blank? [(or (:searchable_text doc) "")
+                                                                  (or (:native_query doc) "")])))]
      (search/weighted-tsvector "A"
-                               (str/join " " (remove str/blank? [(:searchable_text doc "")
-                                                                 (:native_query doc "")]))))})
+                               (str/join " " (remove str/blank? [(or (:searchable_text doc) "")
+                                                                 (or (:native_query doc) "")]))))})
 
 (defn index-size
   "Fetches the number of documents in the index table."
@@ -286,7 +297,7 @@
     [(remove found-embeddings texts) found-embeddings]))
 
 (defn- upsert-index-batch!
-  [connectable index documents]
+  [connectable index documents & {:as opts}]
   (when (seq documents)
     (let [text->docs        (group-by :searchable_text documents)
           searchable-texts  (keys text->docs)
@@ -304,7 +315,8 @@
            (embedding/process-embeddings-streaming
             (:embedding-model index)
             new-texts
-            upsert-embedding!)))
+            upsert-embedding!
+            opts)))
        (merge-with + stats)))))
 
 (def ^:private ^:dynamic *retrying* false)
@@ -340,8 +352,8 @@
 
 (defn upsert-index-pooled!
   "Returns a future which upserts the provided documents into the index table, executed using the provided thread pool."
-  [pool connectable index documents]
-  (cp/future pool (upsert-index-batch! connectable index documents)))
+  [pool connectable index documents & {:as opts}]
+  (cp/future pool (upsert-index-batch! connectable index documents opts)))
 
 (defn upsert-index!
   "Inserts or updates documents in the index table. If a document with the same
@@ -353,8 +365,8 @@
           results (transduce
                    (comp (partition-all *batch-size*)
                          (map (if serial?
-                                #(upsert-index-batch! connectable index %)
-                                #(upsert-index-pooled! pool connectable index %))))
+                                #(upsert-index-batch! connectable index % {:type :index})
+                                #(upsert-index-pooled! pool connectable index % {:type :index}))))
                    conj
                    documents-reducible)]
       (reduce (fn [update-counts result]
@@ -759,6 +771,11 @@
         (analytics/inc! :metabase-search/semantic-collection-filter-ms time-ms)
         filtered-docs))))
 
+(defn- reducible-search-query
+  "Extracted so can be redefd in tests."
+  [db query]
+  (jdbc/plan db (sql-format-quoted query) {:builder-fn jdbc.rs/as-unqualified-lower-maps}))
+
 (defn query-index
   "Query the index for documents similar to the search string.
   Returns a map with :results and :raw-count."
@@ -769,7 +786,7 @@
       {:results [] :raw-count 0}
       (let [timer (u/start-timer)
 
-            embedding (embedding/get-embedding embedding-model search-string)
+            embedding (embedding/get-embedding embedding-model search-string {:type :query})
             embedding-time-ms (u/since-ms timer)
 
             db-timer (u/start-timer)
@@ -778,7 +795,7 @@
             query (scored-search-query index embedding search-context scorers)
             xform (comp (map decode-metadata)
                         (map (partial legacy-input-with-score weights (keys scorers))))
-            reducible (jdbc/plan db (sql-format-quoted query) {:builder-fn jdbc.rs/as-unqualified-lower-maps})
+            reducible (reducible-search-query db query)
             raw-results (into [] xform reducible)
             db-query-time-ms (u/since-ms db-timer)
 
