@@ -10,6 +10,7 @@ import type {
   MetabaseEmbeddingSessionToken,
   MetabaseFetchRequestTokenFn,
   SdkErrorComponent,
+  SdkLoadingError,
 } from "embedding-sdk-bundle";
 import type { SdkState, SdkStoreState } from "embedding-sdk-bundle/store/types";
 import type { SdkEventHandlersConfig } from "embedding-sdk-bundle/types/events";
@@ -23,6 +24,7 @@ import { getSessionTokenState } from "./selectors";
 const SET_METABASE_CLIENT_URL = "sdk/SET_METABASE_CLIENT_URL";
 const SET_LOADER_COMPONENT = "sdk/SET_LOADER_COMPONENT";
 const SET_ERROR_COMPONENT = "sdk/SET_ERROR_COMPONENT";
+const SET_ERROR = "sdk/SET_ERROR";
 const SET_FETCH_REQUEST_TOKEN_FN = "sdk/SET_FETCH_REQUEST_TOKEN_FN";
 
 export const setMetabaseClientUrl = createAction<string>(
@@ -34,6 +36,7 @@ export const setLoaderComponent = createAction<null | (() => JSX.Element)>(
 export const setErrorComponent = createAction<null | SdkErrorComponent>(
   SET_ERROR_COMPONENT,
 );
+export const setError = createAction<SdkLoadingError | null>(SET_ERROR);
 export const setFetchRefreshTokenFn =
   createAction<null | MetabaseFetchRequestTokenFn>(SET_FETCH_REQUEST_TOKEN_FN);
 
@@ -56,12 +59,18 @@ export const getOrRefreshSession = createAsyncThunk(
     // refreshes the page
     const storedAuthToken = samlTokenStorage.get();
     const state = getSessionTokenState(getState() as SdkStoreState);
-    const token = storedAuthToken ?? state?.token;
+    /**
+     * @see {@link https://github.com/metabase/metabase/pull/64238#discussion_r2394229266}
+     *
+     * TODO: I think this should be called session overall e.g. state.session
+     */
+    const session = storedAuthToken ?? state?.token;
 
-    const isTokenValid = token && token.exp * 1000 >= Date.now();
-
-    if (isTokenValid) {
-      return token;
+    const shouldRefreshToken =
+      !session ||
+      (typeof session?.exp === "number" && session.exp * 1000 < Date.now());
+    if (!shouldRefreshToken) {
+      return session;
     }
 
     if (refreshTokenPromise) {
@@ -100,6 +109,7 @@ const initialState: SdkState = {
     error: null,
   },
   loginStatus: { status: "uninitialized" },
+  error: null,
   plugins: null,
   eventHandlers: null,
   usageProblem: null,
@@ -156,6 +166,10 @@ export const sdk = createReducer(initialState, (builder) => {
 
   builder.addCase(setErrorComponent, (state, action) => {
     state.errorComponent = action.payload;
+  });
+
+  builder.addCase(setError, (state, action) => {
+    state.error = action.payload;
   });
 
   builder.addCase(setMetabaseClientUrl, (state, action) => {
