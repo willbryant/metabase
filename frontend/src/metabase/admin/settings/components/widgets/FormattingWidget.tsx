@@ -30,6 +30,7 @@ const DEFAULT_FORMATTING_SETTINGS: FormattingSettings = {
   "type/Currency": {
     currency: "USD",
     currency_style: "symbol",
+    currency_in_header: true,
   },
 };
 
@@ -65,10 +66,10 @@ export function FormattingWidget() {
   const { number_separators: numberSeparators } =
     localValue?.["type/Number"] || {};
 
-  const { currency, currency_style: currencyStyle } =
+  const { currency, currency_style: currencyStyle, currency_in_header: currencyInHeader } =
     localValue?.["type/Currency"] || {};
 
-  const [currencyOptions, currencyStyleOptions] = useMemo(() => {
+  const [currencyOptions, currencyStyleOptions, currencyInHeaderOptions] = useMemo(() => {
     const currencyOptions = (
       getCurrencyOptions() as { name: string; value: string }[]
     ).map(mapNameToLabel);
@@ -76,8 +77,12 @@ export function FormattingWidget() {
       currency,
       currencyStyle,
     ).map(mapNameToLabel);
-    return [currencyOptions, currencyStyleOptions];
-  }, [currency, currencyStyle]);
+    const currencyInHeaderOptions = [
+      { label: t`In the column heading`, value: true },
+      { label: t`In every table cell`, value: false },
+    ];
+    return [currencyOptions, currencyStyleOptions, currencyInHeaderOptions];
+  }, [currency, currencyStyle, currencyInHeader]);
 
   const dateStyleOptions = getDateStyleOptionsForUnit("default", dateAbreviate);
 
@@ -208,6 +213,22 @@ export function FormattingWidget() {
                   "type/Currency": {
                     ...localValue?.["type/Currency"],
                     currency_style: newValue as CurrencyStyle,
+                  },
+                })
+              }
+            />
+            <FormattingInput
+              id="currency_in_header"
+              label={t`Where to display the unit of currency`}
+              value={currencyInHeader}
+              inputType="radio"
+              options={currencyInHeaderOptions}
+              onChange={(newValue) =>
+                handleChange({
+                  ...localValue,
+                  "type/Currency": {
+                    ...localValue?.["type/Currency"],
+                    currency_in_header: newValue === "true",
                   },
                 })
               }
