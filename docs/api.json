@@ -7112,6 +7112,10 @@
         "type" : "string",
         "enum" : [ "default", "write-data" ]
       },
+      "metabase.frontend-errors.api.frontend-error-type" : {
+        "type" : "string",
+        "enum" : [ "component-crash", "chart-render-error" ]
+      },
       "metabase.legacy-mbql.schema.-" : {
         "description" : "schema for a valid MBQL 4 :- clause",
         "allOf" : [ ]
@@ -34497,6 +34501,41 @@
         "tags" : [ "/api/field" ]
       }
     },
+    "/api/frontend-errors" : {
+      "post" : {
+        "operationId" : "post-api-frontend-errors",
+        "summary" : "POST /api/frontend-errors",
+        "description" : "Endpoint for the frontend to report errors. Increments a Prometheus counter\n   with the given `type` label.",
+        "parameters" : [ ],
+        "responses" : {
+          "2XX" : {
+            "description" : "Successful response"
+          },
+          "4XX" : {
+            "description" : "Client error response"
+          },
+          "5XX" : {
+            "description" : "Server error response"
+          }
+        },
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "type" : "object",
+                "properties" : {
+                  "type" : {
+                    "$ref" : "#/components/schemas/metabase.frontend-errors.api.frontend-error-type"
+                  }
+                },
+                "required" : [ "type" ]
+              }
+            }
+          }
+        },
+        "tags" : [ "/api/frontend-errors" ]
+      }
+    },
     "/api/geojson" : {
       "get" : {
         "operationId" : "get-api-geojson",
@@ -47556,6 +47595,48 @@
                 "required" : [ "password" ]
               }
             }
+          }
+        },
+        "tags" : [ "/api/user" ]
+      }
+    },
+    "/api/user/{id}/password-reset-url" : {
+      "post" : {
+        "operationId" : "post-api-user-id-password-reset-url",
+        "summary" : "POST /api/user/{id}/password-reset-url",
+        "description" : "Generate a password reset URL for a user. Admins can share this URL directly with the user.\n  The link expires in 48 hours.",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "integer",
+            "minimum" : 1
+          },
+          "description" : "value must be an integer greater than zero."
+        } ],
+        "responses" : {
+          "2XX" : {
+            "description" : "Successful response",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "properties" : {
+                    "password_reset_url" : {
+                      "type" : "string"
+                    }
+                  },
+                  "required" : [ "password_reset_url" ]
+                }
+              }
+            }
+          },
+          "4XX" : {
+            "description" : "Client error response"
+          },
+          "5XX" : {
+            "description" : "Server error response"
           }
         },
         "tags" : [ "/api/user" ]
