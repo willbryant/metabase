@@ -1098,6 +1098,52 @@
             (is (= ["UPDATED" "UPDATED"]
                    (map :display_name (:result_metadata updated))))))))))
 
+(deftest model-aggregation-metadata-preserved-on-query-test
+  (testing "Custom display_name on aggregation columns should be preserved when querying a model (#26755)"
+    (let [mp    (mt/metadata-provider)
+          query (-> (lib/query mp (lib.metadata/table mp (mt/id :orders)))
+                    (lib/aggregate (lib/count))
+                    (lib/aggregate (lib/sum (lib.metadata/field mp (mt/id :orders :quantity))))
+                    (lib/breakout (lib.metadata/field mp (mt/id :orders :product_id)))
+                    (lib/breakout (lib/with-temporal-bucket
+                                    (lib.metadata/field mp (mt/id :orders :created_at))
+                                    :year)))]
+      (t2/with-transaction [_conn nil {:rollback-only true}]
+        (let [card    (mt/user-http-request :crowberto :post 200 "card"
+                                            {:name                   "model-metadata-test"
+                                             :type                   "model"
+                                             :display                "table"
+                                             :dataset_query          query
+                                             :visualization_settings {}})
+              card-id (:id card)]
+          ;; Verify initial metadata has default display names
+          (is (= ["Product ID" "Created At: Year" "Count" "Sum of Quantity"]
+                 (map :display_name (:result_metadata card))))
+          ;; Rename all columns
+          (let [renames         {"PRODUCT_ID"  "Termekazonosito"
+                                 "CREATED_AT"  "Keszites eve"
+                                 "count"       "Darabszam"
+                                 "sum"         "Osszes mennyiseg"}
+                new-metadata    (mapv (fn [col]
+                                        (if-let [new-name (get renames (:name col))]
+                                          (assoc col :display_name new-name)
+                                          col))
+                                      (:result_metadata card))
+                expected-names  ["Termekazonosito" "Keszites eve" "Darabszam" "Osszes mennyiseg"]
+                updated-card    (mt/user-http-request :crowberto :put 200 (str "card/" card-id)
+                                                      {:result_metadata new-metadata})]
+            ;; Verify the PUT response has the custom display names.
+            ;; ": Year" should NOT be re-appended to a user-customized temporal column name.
+            (is (= expected-names
+                   (map :display_name (:result_metadata updated-card))))
+            ;; Now query the model and verify custom display names are preserved in the response
+            (let [query-response (mt/user-http-request :crowberto :post 202 (format "card/%d/query" card-id))]
+              (is (= expected-names
+                     (map :display_name (get-in query-response [:data :results_metadata :columns]))))
+              ;; Also verify the card's stored metadata in DB wasn't overwritten
+              (is (= expected-names
+                     (map :display_name (t2/select-one-fn :result_metadata :model/Card :id card-id)))))))))))
+
 (deftest ^:parallel updating-native-card-preserves-metadata
   (testing "A trivial change in a native question should not remove result_metadata (#37009)"
     (let [query (to-native (updating-card-updates-metadata-query))
@@ -4786,3 +4832,56 @@
                           :aggregation  [["count"]]}}
               (-> (mt/user-http-request :crowberto :get 200 (str "card/" (:id card)) :legacy-mbql true)
                   :dataset_query))))))
+
+;;; +--------------------------------------------------------------------------------------------------+
+;;; |       result_metadata persistence with parameters (QUE2-502)                                     |
+;;; |       See also: metabase.dashboards-rest.api-test (dashboard endpoint tests for MBQL cards)      |
+;;; +--------------------------------------------------------------------------------------------------+
+
+(deftest parameterized-native-card-does-not-persist-result-metadata-test ; QUE2-502
+  (testing "POST /api/card/:id/query — native card with non-default parameter values should not update result_metadata"
+    (let [query (mt/native-query
+                 {:query         "SELECT COUNT(*) AS cnt FROM ORDERS WHERE PRODUCT_ID = {{product_id}}"
+                  :template-tags {"product_id" {:id           "_PRODUCT_ID_"
+                                                :name         "product_id"
+                                                :display-name "Product ID"
+                                                :type         :number
+                                                :required     true
+                                                :default      "1"}}})]
+      (mt/with-temp [:model/Card {card-id :id}
+                     {:dataset_query query}]
+        ;; First run without parameters to establish baseline metadata (uses default value)
+        (mt/user-http-request :rasta :post 202 (format "card/%d/query" card-id))
+        (let [baseline-metadata (t2/select-one-fn :result_metadata :model/Card :id card-id)]
+          (is (some? baseline-metadata)
+              "Baseline metadata should be established by default-value run")
+          ;; Run with a non-default parameter value — metadata should NOT be updated
+          (mt/user-http-request :rasta :post 202 (format "card/%d/query" card-id)
+                                {:parameters [{:id     "_PRODUCT_ID_"
+                                               :type   :number
+                                               :target [:variable [:template-tag "product_id"]]
+                                               :value  "50"}]})
+          (is (= baseline-metadata
+                 (t2/select-one-fn :result_metadata :model/Card :id card-id))
+              "result_metadata should not change when native card is run with non-default parameter values"))))))
+
+(deftest native-card-with-default-parameters-persists-result-metadata-test ; QUE2-502
+  (testing "POST /api/card/:id/query — native card with default parameter values SHOULD update result_metadata"
+    (let [query (mt/native-query
+                 {:query         "SELECT COUNT(*) AS cnt FROM ORDERS WHERE PRODUCT_ID = {{product_id}}"
+                  :template-tags {"product_id" {:id           "_PRODUCT_ID_"
+                                                :name         "product_id"
+                                                :display-name "Product ID"
+                                                :type         :number
+                                                :required     true
+                                                :default      "1"}}})]
+      (mt/with-temp [:model/Card {card-id :id}
+                     {:dataset_query query}]
+        ;; Run with the default value passed explicitly (as the frontend does)
+        (mt/user-http-request :rasta :post 202 (format "card/%d/query" card-id)
+                              {:parameters [{:id     "_PRODUCT_ID_"
+                                             :type   :number
+                                             :target [:variable [:template-tag "product_id"]]
+                                             :value  "1"}]})
+        (is (some? (t2/select-one-fn :result_metadata :model/Card :id card-id))
+            "result_metadata should be persisted when native card runs with default parameter values")))))

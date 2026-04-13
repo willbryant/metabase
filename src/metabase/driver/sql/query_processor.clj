@@ -13,6 +13,8 @@
    [metabase.driver-api.core :as driver-api]
    [metabase.driver.common :as driver.common]
    [metabase.driver.sql.query-processor.deprecated :as sql.qp.deprecated]
+   [metabase.lib.metadata.protocols :as lib.metadata.protocols]
+   [metabase.query-processor.util.persisted-cache :as qp.persisted]
    [metabase.util :as u]
    [metabase.util.date-2 :as u.date]
    [metabase.util.honey-sql-2 :as h2x]
@@ -902,26 +904,41 @@
           ;; https://linear.app/metabase-inc/issue/ENG-8766/[epic]-field-refs-overhaul
           field-metadata       (when (integer? id-or-name)
                                  (driver-api/field (driver-api/metadata-provider) id-or-name))
-          allow-casting?       (and field-metadata
-                                    (or (pos-int? (driver-api/qp.add.source-table options))
-                                        (:qp/allow-coercion-for-columns-without-integer-qp.add.source-table options))
+          allow-casting?       (and (or (:qp/native-sandbox-column.force-coercion-strategy options)
+                                        (and field-metadata
+                                             (or (pos-int? (driver-api/qp.add.source-table options))
+                                                 (:qp/allow-coercion-for-columns-without-integer-qp.add.source-table options))))
                                     (not (:qp/ignore-coercion options)))
           ;; preserve metadata attached to the original field clause, for example BigQuery temporal type information.
           identifier           (-> (apply h2x/identifier :field
                                           (concat source-table-aliases (->honeysql driver [::nfc-path source-nfc-path]) [source-alias]))
                                    (with-meta (meta field-clause)))
           identifier           (->honeysql driver identifier)
+          ;; If no field-metadata is available, but a coercion strategy must be applied, synthesize enough
+          ;; `field-metadata` to be able to cast it correctly.
+          field-metadata       (or field-metadata
+                                   (when allow-casting?
+                                     (-> options
+                                         (select-keys [:base-type :effetive-type])
+                                         (assoc :coercion-strategy
+                                                (:qp/native-sandbox-column.force-coercion-strategy options)))))
           casted-field         (cast-field-if-needed driver field-metadata identifier)
           database-type        (or (h2x/database-type casted-field)
                                    (:database-type field-metadata))
-          maybe-add-db-type    (fn [expr]
+          effective-type       (when-not database-type
+                                 (let [et (or (:effective-type options) (:base-type options))]
+                                   (when (isa? et :type/Temporal)
+                                     et)))
+          maybe-add-type-info  (fn [expr]
                                  (if (h2x/type-info->db-type (h2x/type-info expr))
                                    expr
-                                   (h2x/with-database-type-info expr database-type)))]
+                                   (if database-type
+                                     (h2x/with-database-type-info expr database-type)
+                                     (h2x/with-type-info expr {:effective-type effective-type}))))]
       (u/prog1
         (cond->> (if allow-casting? casted-field identifier)
           ;; only add type info if it wasn't added by [[cast-field-if-needed]]
-          database-type            maybe-add-db-type
+          (or database-type effective-type) maybe-add-type-info
           (:temporal-unit options) (apply-temporal-bucketing driver options)
           (:binning options)       (apply-binning options))
         (log/trace (binding [*print-meta* true]
@@ -2020,16 +2037,30 @@
 
 (declare apply-clauses)
 
+(defn- resolve-persisted-source-sql
+  "Look up persisted cache SQL from the metadata provider. Returns nil if unavailable or disabled."
+  [source-query]
+  (when-not (:qp/skip-persisted-cache source-query)
+    (when-let [card-id (:qp/stage-is-from-source-card source-query)]
+      (let [mp   (driver-api/metadata-provider)
+            card (lib.metadata.protocols/card mp card-id)]
+        (when-let [persisted-info (:lib/persisted-info card)]
+          (when (qp.persisted/can-substitute? card persisted-info)
+            (qp.persisted/persisted-info-native-query
+             (:id (lib.metadata.protocols/database mp))
+             persisted-info)))))))
+
 (defn- apply-source-query
   "Handle a `:source-query` clause by adding a recursive `SELECT` or native query.
    If the source query has ambiguous column names, use a `WITH` statement to rename the source columns.
    At the time of this writing, all source queries are aliased as `source`."
-  [driver honeysql-form {{:keys [native params] persisted :persisted-info/native :as source-query} :source-query
+  [driver honeysql-form {{:keys [native params] :as source-query} :source-query
                          source-metadata :source-metadata}]
   (let [table-alias (->honeysql driver (h2x/identifier :table-alias source-query-alias))
+        persisted-sql (resolve-persisted-source-sql source-query)
         source-clause (cond
-                        persisted
-                        (sql-source-query persisted nil)
+                        persisted-sql
+                        (sql-source-query persisted-sql nil)
 
                         native
                         (sql-source-query native params)
