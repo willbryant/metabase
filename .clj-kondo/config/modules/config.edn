@@ -1109,7 +1109,7 @@
            sync
            util
            warehouse-schema}
-   :model-imports #{:model/Database :model/Field :model/Table}}
+   :model-imports #{:model/Card :model/Database :model/Field :model/Table}}
 
   logger
   {:team "DevEx"
@@ -1482,7 +1482,6 @@
   {:team "DevEx"
    :api  #{metabase.plugins.core}
    :uses #{classloader
-           config
            driver
            util}}
 
@@ -2526,7 +2525,6 @@
            request
            sample-data
            secrets
-           server
            settings
            sync
            upload
@@ -2667,7 +2665,6 @@
            app-db
            audit-app
            classloader
-           config
            driver
            lib
            models
@@ -3203,6 +3200,7 @@
            lib
            logger
            models
+           permissions
            plugins
            premium-features
            search

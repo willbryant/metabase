@@ -16,7 +16,7 @@
    [metabase.driver.postgres :as postgres]
    [metabase.driver.postgres.actions :as postgres.actions]
    [metabase.driver.settings :as driver.settings]
-   [metabase.driver.sql :as driver.sql]
+   [metabase.driver.sql-jdbc :as driver.sql-jdbc]
    [metabase.driver.sql-jdbc.actions :as sql-jdbc.actions]
    [metabase.driver.sql-jdbc.actions-test :as sql-jdbc.actions-test]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
@@ -545,6 +545,42 @@
                   "LIMIT"
                   "  1048575"]
                  (str/split-lines (driver/prettify-native-form :postgres (:query nested))))))))))
+
+;;; Postgres `:contains`/`:starts-with`/`:ends-with` must produce SQL that the PostgreSQL JDBC
+;;; driver can prepare regardless of the server's `standard_conforming_strings` setting. With
+;;; that setting off, PGJDBC's parser treats `\` as an escape inside string literals, so the
+;;; `'\'` in `LIKE ? ESCAPE '\'` is parsed as an unterminated literal and the query crashes with
+;;; `Unterminated string literal started at position N` before the SQL ever reaches the server
+;;; (#73721).
+(deftest contains-filter-jdbc-parser-test
+  (mt/test-driver :postgres
+    (testing "PGJDBC parses :contains/:starts-with/:ends-with SQL regardless of standard_conforming_strings (#73721)"
+      (let [mp       (mt/metadata-provider)
+            venues   (lib.metadata/table mp (mt/id :venues))
+            name-col (lib.metadata/field mp (mt/id :venues :name))]
+        (doseq [scs ["on" "off"]]
+          (testing (str "standard_conforming_strings = " scs)
+            ;; Fresh non-pooled connection per setting (the pool is bypassed because we pass a
+            ;; raw JDBC spec rather than a Database ID), so:
+            ;; - the session-scoped `SET` can't contaminate the shared pool, and
+            ;; - PGJDBC's per-connection parsed-query cache starts empty, so each
+            ;;   `prepareStatement` actually exercises the parser.
+            (sql-jdbc.execute/do-with-connection-with-options
+             :postgres
+             (sql-jdbc.conn/connection-details->spec :postgres (:details (mt/db)))
+             nil
+             (fn [^Connection conn]
+               (with-open [stmt (.createStatement conn)]
+                 (.execute stmt (str "SET standard_conforming_strings TO " scs)))
+               (doseq [[op-name op-fn] {:contains    lib/contains
+                                        :starts-with lib/starts-with
+                                        :ends-with   lib/ends-with}]
+                 (testing op-name
+                   (let [query (-> (lib/query mp venues)
+                                   (lib/filter (op-fn name-col "Foo")))
+                         {sql :query} (qp.compile/compile query)]
+                     (is (some? (with-open [pstmt (.prepareStatement conn sql)] pstmt))
+                         (str "PGJDBC should prepare the SQL; got SQL: " sql)))))))))))))
 
 (deftest describe-nested-field-columns-identifier-test
   (mt/test-driver :postgres
@@ -1700,18 +1736,21 @@
 
 (deftest ^:parallel set-role-statement-test
   (testing "set-role-statement should return a SET ROLE command, with the role quoted if it contains special characters"
-    ;; No special characters
-    (is (= "SET ROLE MY_ROLE;"        (driver.sql/set-role-statement :postgres "MY_ROLE")))
-    (is (= "SET ROLE ROLE123;"        (driver.sql/set-role-statement :postgres "ROLE123")))
-    (is (= "SET ROLE lowercase_role;" (driver.sql/set-role-statement :postgres "lowercase_role")))
-
-    ;; None (special role in Postgres to revert back to login role; should not be quoted)
-    (is (= "SET ROLE none;"      (driver.sql/set-role-statement :postgres "none")))
-    (is (= "SET ROLE NONE;"      (driver.sql/set-role-statement :postgres "NONE")))
-
-    ;; Special characters
-    (is (= "SET ROLE \"Role.123\";"   (driver.sql/set-role-statement :postgres "Role.123")))
-    (is (= "SET ROLE \"$role\";"      (driver.sql/set-role-statement :postgres "$role")))))
+    (mt/test-driver :postgres
+      (sql-jdbc.execute/do-with-connection-with-options
+       :postgres (mt/id) nil
+       (fn [conn]
+         (are [role expected] (= expected
+                                 (driver.sql-jdbc/set-role-statement :postgres conn role))
+           "MY_ROLE"                      "SET ROLE MY_ROLE;"
+           "ROLE123"                      "SET ROLE ROLE123;"
+           "lowercase_role"               "SET ROLE lowercase_role;"
+           "Role.123"                     "SET ROLE \"Role.123\";"
+           "$role"                        "SET ROLE \"$role\";"
+           "role\"; SELECT sleep(10); --" "SET ROLE \"role\"\"; SELECT sleep(10); --\";"
+           ;; None (special role in Postgres to revert back to login role; should not be quoted)
+           "none"                         "SET ROLE none;"
+           "NONE"                         "SET ROLE NONE;"))))))
 
 (deftest get-tables-parity-with-jdbc-test
   (testing "make sure our get-tables return result consistent with jdbc getTables"
@@ -2202,9 +2241,7 @@
                 (.execute stmt "SELECT pg_sleep(6)")))))))))
 
 (deftest ^:parallel parse-final-identifier-test
-  (mt/test-driver
-    :postgres
-
+  (mt/test-driver :postgres
     (testing "`final` is allowed as identifier and parsed correctly"
       (mt/with-temp [:model/Database db {:engine "postgres"
                                          :name "final"

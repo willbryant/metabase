@@ -934,13 +934,19 @@
 
 ;;; ------------------------------------------------- User Impersonation --------------------------------------------------
 
-(defmethod driver.sql/set-role-statement :snowflake
-  [_ role]
+(defmethod sql-jdbc/set-role-statement :snowflake
+  [_driver _conn role]
+  ;; Apparently `identifier(?)` still parses the identifier string as an unquoted identifier, so we still need to
+  ;; manually wrap it in double quotes and manually escape doubles quotes inside `role` itself :unamused: ...
+  ;; see (#73788)
   (let [special-chars-pattern #"[^a-zA-Z0-9_]"
-        needs-quote           (re-find special-chars-pattern role)]
-    (if needs-quote
-      (format "USE ROLE \"%s\";" role)
-      (format "USE ROLE %s;" role))))
+        needs-quote?          (re-find special-chars-pattern role)
+        quoted-role           (if needs-quote?
+                                (-> role
+                                    (str/replace #"\"" "\"\"")
+                                    (as-> $role (str \" $role \")))
+                                role)]
+    ["USE ROLE identifier(?);" quoted-role]))
 
 (defmethod driver.sql/default-database-role :snowflake
   [_ database]
