@@ -2862,6 +2862,7 @@
            api
            app-db
            collections
+           database-routing
            documents
            driver
            events
@@ -2995,6 +2996,7 @@
               models
               permissions
               premium-features
+              settings
               task
               util
               enterprise/dependencies
@@ -3200,7 +3202,6 @@
            lib
            logger
            models
-           permissions
            plugins
            premium-features
            search
