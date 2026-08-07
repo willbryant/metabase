@@ -1,6 +1,6 @@
 (ns metabase.driver.snowflake
   "Snowflake Driver."
-  (:refer-clojure :exclude [select-keys empty? not-empty mapv])
+  (:refer-clojure :exclude [select-keys not-empty mapv])
   (:require
    [buddy.core.codecs :as codecs]
    [clojure.java.jdbc :as jdbc]
@@ -38,7 +38,7 @@
    [metabase.util.json :as json]
    [metabase.util.log :as log]
    [metabase.util.malli :as mu]
-   [metabase.util.performance :refer [empty? mapv not-empty select-keys]]
+   [metabase.util.performance :refer [mapv not-empty select-keys]]
    [ring.util.codec :as codec])
   (:import
    (java.io File)
@@ -166,7 +166,7 @@
              (keep (fn [param]
                      (let [key-val (str/split param #"=")]
                        (if-not (= 2 (count key-val))
-                         (log/warnf "Invalid Snowflake connection URI parameter: '%s'" param)
+                         (log/warn "Invalid Snowflake connection URI parameter")
                          (let [[k v] key-val]
                            [(u/upper-case-en (URLDecoder/decode ^String k "UTF-8"))
                             (URLDecoder/decode ^String v "UTF-8")])))))
@@ -230,12 +230,11 @@
         (and (not use-password) password-details)
         (conj password-details)))))
 
-(defn- set-put-get [additional-options]
-  (cond (empty? additional-options) "enablePutGet=false"
-        (re-find #"(?i)enablePutGet=" additional-options) (str/replace additional-options
-                                                                       #"enablePutGet=[^&]+"
-                                                                       "enablePutGet=false")
-        :else (str additional-options "&enablePutGet=false")))
+(defn- normalize-additional-options [additional-options]
+  (when-not (str/blank? additional-options)
+    (not-empty
+     (str/join "&" (remove #(re-matches #"(?i)enablePutGet(=.*)?" %)
+                           (str/split additional-options #"&"))))))
 
 (defmethod sql-jdbc.conn/connection-details->spec :snowflake
   [_ {:keys [account additional-options host use-hostname password use-password], :as details}]
@@ -289,10 +288,11 @@
                    resolve-private-key
                    (dissoc :host :port :timezone)))
         (sql-jdbc.common/handle-additional-options (update details
-                                                           :additional-options set-put-get))
+                                                           :additional-options normalize-additional-options))
         ;; Role is not respected when used as connection property if connection string is present with private key
         ;; file. Hence it is moved to connection url. https://github.com/metabase/metabase/issues/43600
-        (maybe-add-role-to-spec-url details))))
+        (maybe-add-role-to-spec-url details)
+        (assoc :enablePutGet "false"))))
 
 (mu/defn- database-type->base-type
   [database-type :- string?
@@ -421,8 +421,8 @@
 
 (defmethod driver/insert-into! :snowflake
   [driver db-id table-name column-names values]
-  ;; Snowflake's fast bulk path (`PUT` + `COPY INTO` from a stage) is unavailable because [[set-put-get]]
-  ;; enforces `enablePutGet=false` on every connection (#73578), so use the generic multi-row `INSERT`.
+  ;; Snowflake's fast bulk path (`PUT` + `COPY INTO` from a stage) is unavailable because Metabase's
+  ;; Snowflake connections set `enablePutGet=false`, so use the generic multi-row `INSERT`.
   ((get-method driver/insert-into! :sql-jdbc)
    driver db-id table-name column-names
    (map #(mapv temporal-bind->string %) values)))
@@ -816,7 +816,7 @@
         ;; The Snowflake JDBC driver may throw for unsupported column types (e.g. UUID) during
         ;; DatabaseMetaData.getColumns() iteration. Fall back to SELECT * metadata which doesn't
         ;; hit the same code path. See #71595.
-        (log/warnf e "Error reading JDBC metadata for table %s, falling back to SELECT * metadata" (:name table))
+        (log/warnf "Error reading JDBC metadata for table %s, falling back to SELECT * metadata: %s" (:name table) (ex-message e))
         (mapv fix-base-type
               (fallback-fields-metadata driver conn table database))))))
 
@@ -840,8 +840,15 @@
   [_ entity-name]
   (escape-name-for-metadata entity-name))
 
+(defn- show-dynamic-tables-sql
+  "Takes raw, unescaped names. Only the LIKE argument is a pattern, where `_` is a wildcard; the IN SCHEMA
+  names are plain identifiers and must not be escaped (#78541)."
+  [db-name schema-name table-name]
+  (format "SHOW DYNAMIC TABLES LIKE '%s' IN SCHEMA %s.%s;"
+          (escape-name-for-metadata table-name) (quote-schema db-name) (quote-schema schema-name)))
+
 (mu/defn- dynamic-table?
-  "Check if the table is a dynamic table.
+  "Check if the table is a dynamic table. Takes raw, unescaped names.
 
   You can't rely on :table_type from INFORMATION_SCHEMA.TABLES or :type from getTables because in
   both cases it returns `Table` for dynamic tables."
@@ -853,15 +860,13 @@
     ;; there is another way of checking this by using SHOW TABLES command and check `is_dynamic` column.
     ;; But this column is not documented on https://docs.snowflake.com/en/sql-reference/sql/show-tables (2024/05/07),
     ;; So we avoid using it here.
-    (-> (jdbc/query
-         {:connection conn}
-         [(format "SHOW DYNAMIC TABLES LIKE '%s' IN SCHEMA %s.%s;"
-                  table-name (quote-schema db-name) (quote-schema schema-name))])
+    (-> (jdbc/query {:connection conn} [(show-dynamic-tables-sql db-name schema-name table-name)])
         first
         some?)
     (catch SnowflakeSQLException e
-      (log/warn e "Failed to check if table is dynamic")
-      ;; query will fail if schema doesn't exist
+      ;; query will fail if schema doesn't exist. This runs once per table, so skip the stack trace.
+      (log/warnf "Failed to check if table %s.%s.%s is dynamic: %s"
+                 db-name schema-name table-name (ex-message e))
       false)))
 
 (defn- table->db-name
@@ -901,11 +906,11 @@
    ^String           db-name    :- [:maybe :string]
    ^String           schema     :- [:maybe :string]
    ^String           table-name :- :string]
-  ;; Snowflake bug: schema and table name are interpreted as patterns
-  (let [schema     (escape-name-for-metadata schema)
-        table-name (escape-name-for-metadata table-name)]
-    (when-not (dynamic-table? conn db-name schema table-name)
-      (sql-jdbc.sync/reducible-table-fks-from-jdbc-metadata metadata db-name schema table-name))))
+  (when-not (dynamic-table? conn db-name schema table-name)
+    ;; Snowflake bug: schema and table name are interpreted as patterns
+    (sql-jdbc.sync/reducible-table-fks-from-jdbc-metadata metadata db-name
+                                                          (escape-name-for-metadata schema)
+                                                          (escape-name-for-metadata table-name))))
 
 (mu/defmethod driver/describe-fks :snowflake :- ::driver/describe-fks.result
   [driver          :- :keyword

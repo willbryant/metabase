@@ -438,6 +438,23 @@ const SdkDashboardInner = ({
     ],
   );
 
+  // "Edit question" opens the card via adhocQuestionUrl without going through
+  // onNavigateToNewCardFromDashboard, so it never pushes to the navigation stack
+  // and the back button stays hidden. Push a virtual entry here so the question
+  // view renders a back button to the dashboard, matching the drill-in flow.
+  const onEditQuestionWithNav = useCallback(
+    (question: Parameters<typeof onEditQuestion>[0]) => {
+      sdkNavigation?.push({
+        type: "open-card",
+        virtual: true,
+        name: question.displayName() ?? t`Question`,
+        onPop: () => onNavigateBackToDashboard(),
+      });
+      onEditQuestion(question);
+    },
+    [onEditQuestion, sdkNavigation, onNavigateBackToDashboard],
+  );
+
   if (isLocaleLoading) {
     return (
       <MaybeStyledWrapper
@@ -598,7 +615,7 @@ const SdkDashboardInner = ({
           .with({ finalRenderMode: "dashboard" }, () => (
             <SdkDashboardProvider
               plugins={plugins}
-              onEditQuestion={onEditQuestion}
+              onEditQuestion={onEditQuestionWithNav}
             >
               {children ?? (
                 <MaybeStyledWrapper
@@ -624,18 +641,24 @@ const SdkDashboardInner = ({
                 />
               </MaybeStyledWrapper>
             ) : (
-              <DashboardQueryBuilder
-                onCreate={(question) => {
-                  setNewDashboardQuestionId(question.id);
-                  sdkNavigation?.pop(); // onPop handles setRenderMode("dashboard")
-                  dashboardContextProviderRef.current?.refetchDashboard();
-                }}
-                onNavigateBack={() => {
-                  sdkNavigation?.pop(); // onPop handles setRenderMode("dashboard")
-                }}
-                dataPickerProps={dataPickerProps}
-                onVisualizationChange={onVisualizationChange}
-              />
+              <MaybeStyledWrapper
+                skip={skipStyledWrapper}
+                className={className}
+                style={style}
+              >
+                <DashboardQueryBuilder
+                  onCreate={(question) => {
+                    setNewDashboardQuestionId(question.id);
+                    sdkNavigation?.pop(); // onPop handles setRenderMode("dashboard")
+                    dashboardContextProviderRef.current?.refetchDashboard();
+                  }}
+                  onNavigateBack={() => {
+                    sdkNavigation?.pop(); // onPop handles setRenderMode("dashboard")
+                  }}
+                  dataPickerProps={dataPickerProps}
+                  onVisualizationChange={onVisualizationChange}
+                />
+              </MaybeStyledWrapper>
             ),
           )
           .exhaustive()}
@@ -722,8 +745,9 @@ function DashboardQueryBuilder({
       }}
       entityTypes={dataPickerProps?.entityTypes}
       withChartTypeSelector
-      // The default value is 600px and it cuts off the "Visualize" button.
-      height="700px"
+      // Fill the available space so the query builder matches the dashboard's
+      // sizing instead of a fixed height that leaves whitespace / scrolls.
+      height="100%"
       onVisualizationChange={onVisualizationChange}
     />
   );

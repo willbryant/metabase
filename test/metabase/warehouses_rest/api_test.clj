@@ -985,11 +985,10 @@
                    :model/Table table {:db_id db-id}
                    :model/Field _ {:table_id (u/the-id table)}]
       (testing "GET /api/database/:id/metadata?skip_fields=true"
-        (let [fields (->> (mt/user-http-request :rasta :get 200 (format "database/%d/metadata?skip_fields=true" db-id))
-                          :tables
-                          first
-                          :fields)]
-          (is (= () fields)))))))
+        (let [table (->> (mt/user-http-request :rasta :get 200 (format "database/%d/metadata?skip_fields=true" db-id))
+                         :tables
+                         first)]
+          (is (not (contains? table :fields))))))))
 
 (deftest ^:parallel autocomplete-suggestions-test
   (let [prefix-fn (fn [db-id prefix]
@@ -1241,6 +1240,38 @@
         (mt/with-temp-env-var-value! ["MB_ENABLE_NESTED_QUERIES" "false"]
           (is (not-any? :is_saved_questions
                         (:data (mt/user-http-request :lucky :get 200 "database?saved=true")))))))))
+
+(deftest databases-list-saved-questions-call-count-test
+  (testing "GET /api/database?saved=true&include=tables app-DB call count should not scale with the number of Cards"
+    (mt/with-model-cleanup [:model/Card]
+      (letfn [(insert-cards! [n]
+                (dotimes [_ n]
+                  (t2/insert! :model/Card
+                              (assoc (card-with-native-query (mt/random-name))
+                                     :creator_id             (mt/user->id :crowberto)
+                                     :display                :table
+                                     :visualization_settings {}
+                                     ;; a column with a real Field :id exercises the per-card Field
+                                     ;; fetch + hydration path
+                                     :result_metadata        [{:id           (mt/id :venues :name)
+                                                               :name         "NAME"
+                                                               :display_name "Name"
+                                                               :base_type    :type/Text}]))))
+              (warm-call-count! []
+                ;; first request pays one-time priming; measure the second
+                (mt/user-http-request :crowberto :get 200 "database?saved=true&include=tables")
+                (t2/with-call-count [call-count]
+                  (mt/user-http-request :crowberto :get 200 "database?saved=true&include=tables")
+                  (call-count)))]
+        (insert-cards! 2)
+        (let [calls-with-2  (warm-call-count!)
+              _             (insert-cards! 16)
+              calls-with-18 (warm-call-count!)]
+          ;; [[mi/do-after-select]] re-runs each Card row through toucan2's identity-query, which
+          ;; `with-call-count` counts even though it never hits the DB — so growth of 1 per Card is
+          ;; expected and allowed. The slack of 6 stays well under the pre-batching behavior of one
+          ;; real `metabase_database` select per additional Card on top of that (#78919).
+          (is (<= calls-with-18 (+ calls-with-2 16 6))))))))
 
 (deftest fetch-databases-with-invalid-driver-test
   (testing "GET /api/database"
@@ -2192,6 +2223,34 @@
         (is (= ["t1" "t2"]
                (map :name (mt/user-http-request :lucky :get 200 (format "database/%d/schema/" db-id)))))))))
 
+(deftest ^:parallel get-schema-tables-schema-query-param-test
+  (testing "GET /api/database/:id/schema/?schema=:schema"
+    (mt/with-temp [:model/Database {db-id :id} {}
+                   :model/Table    _ {:db_id db-id :schema nil :name "t1"}
+                   :model/Table    _ {:db_id db-id :schema "" :name "t2"}
+                   :model/Table    _ {:db_id db-id :schema "public" :name "t3"}]
+      (let [url (format "database/%d/schema/" db-id)]
+        (testing "the schema can be passed as a query parameter"
+          (is (= ["t3"]
+                 (map :name (mt/user-http-request :lucky :get 200 url :schema "public")))))
+        (testing "which, unlike the route param, supports schema names containing characters rejected in URL
+                 paths at the HTTP layer: slashes (#77353), backslashes, and percent signs"
+          (doseq [schema-name ["public/transactions" "back\\slash" "per%cent"]]
+            (mt/with-temp [:model/Table _ {:db_id db-id :schema schema-name :name (str "table in " schema-name)}]
+              (is (= [(str "table in " schema-name)]
+                     (map :name (mt/user-http-request :lucky :get 200 url :schema schema-name)))))))
+        (testing "an empty schema query param behaves like no schema param: `nil` and empty schemas"
+          (is (= ["t1" "t2"]
+                 (map :name (mt/user-http-request :lucky :get 200 url :schema "")))))
+        (testing "should return a 404 for a schema that doesn't exist"
+          (is (= "Not found."
+                 (mt/user-http-request :lucky :get 404 url :schema "no such schema"))))
+        (testing "the route-param form of such names is rejected at the HTTP layer, which is why the query
+                 param exists; if this assertion fails, the query-param workaround may be obsolete (#77353)"
+          (is (= 400 (:status (mt/user-real-request-full-response
+                               :lucky :get 400
+                               (str url "public%2Ftransactions"))))))))))
+
 (deftest ^:parallel get-schema-tables-publishing-test
   (testing "GET /api/database/:id/schema/:schema"
     (testing "should return is_published as true for published tables"
@@ -2567,7 +2626,8 @@
         (testing "does not includes undefined keys by default"
           (is (not (contains? (:settings (mt/user-http-request :crowberto :get 200 (str "database/" db-id)))
                               :undefined-setting))))
-        (is (= "Error checking the readability of :undefined-setting setting. The setting will be hidden in API response."
+        (is (= (str "Error checking the readability of :undefined-setting setting. The setting will be hidden in API response."
+                    " Error: Unknown setting: :undefined-setting")
                (-> (messages)
                    first
                    :message)))))))

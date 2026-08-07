@@ -147,6 +147,7 @@
            config
            events
            models
+           permissions
            util}
    :model-imports #{:model/Card
                     :model/Collection
@@ -1288,6 +1289,7 @@
               lib
               lib-be
               llm
+              metrics
               models
               native-query-snippets
               notification
@@ -1876,6 +1878,7 @@
    :model-imports #{:model/Card
                     :model/DashboardCardSeries
                     :model/Database
+                    :model/NativeQuerySnippet
                     :model/QueryCache
                     :model/QueryExecution
                     :model/Table}}
@@ -1990,6 +1993,7 @@
    :model-imports #{:model/Card
                     :model/Collection
                     :model/Dashboard
+                    :model/Database
                     :model/Table
                     :model/User}}
 
@@ -2173,7 +2177,8 @@
            lib
            settings
            sql-parsing
-           util}}
+           util}
+   :model-imports #{:model/Table}}
 
   sso
   {:team "UX West"
@@ -2749,6 +2754,7 @@
            lib
            lib-be
            models
+           permissions
            queries
            query-permissions
            query-processor
@@ -3191,6 +3197,7 @@
    :api  #{metabase-enterprise.erd.api}
    :uses #{api
            models
+           permissions
            util
            warehouse-schema}
    :model-imports #{:model/Database
@@ -3600,7 +3607,7 @@
 
   enterprise/tenants
   {:team "Admin Webapp"
-   :api  #{metabase-enterprise.tenants.api}
+   :api  #{metabase-enterprise.tenants.api metabase-enterprise.tenants.init}
    :uses #{api
            audit-app
            auth-identity
@@ -3676,6 +3683,7 @@
    :api  #{metabase-enterprise.upload-management.api}
    :uses #{api
            models
+           permissions
            premium-features
            upload
            util}

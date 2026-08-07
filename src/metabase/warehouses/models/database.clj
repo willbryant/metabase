@@ -251,7 +251,7 @@
     (when (should-auto-sync? database)
       ((requiring-resolve 'metabase.sync.task.sync-databases/check-and-schedule-tasks-for-db!) database))
     (catch Throwable e
-      (log/error e "Error scheduling tasks for DB"))))
+      (log/errorf "Error scheduling tasks for DB: %s" (ex-message e)))))
 
 (defn maybe-test-and-migrate-details!
   "When a driver has db-details to test and migrate:
@@ -280,25 +280,24 @@
    Reports analytics with the given connection-type label."
   [database driver engine details-map connection-type]
   (try
-    (log/info (u/format-color :cyan "Health check [%s]: checking %s {:id %d}"
-                              connection-type (:name database) (:id database)))
+    (log/info (u/format-color :cyan "Health check [%s]: checking database {:id %d}"
+                              connection-type (:id database)))
     (u/with-timeout (driver.settings/db-connection-timeout-ms)
       (or (driver/can-connect? driver details-map)
           (throw (Exception. (format "Failed to connect to Database (%s)" connection-type)))))
-    (log/info (u/format-color :green "Health check [%s]: success %s {:id %d}"
-                              connection-type (:name database) (:id database)))
+    (log/info (u/format-color :green "Health check [%s]: success database {:id %d}"
+                              connection-type (:id database)))
     (analytics/inc! :metabase-database/status {:driver engine :healthy true :connection-type connection-type})
     true
     (catch Throwable e
       (let [humanized-message (some->> (u/all-ex-messages e)
                                        (driver/humanize-connection-error-message driver))
             reason            (if (keyword? humanized-message) "user-input" "exception")]
-        (log/error e (u/format-color :red "Health check [%s]: failure with error %s {:id %d :reason %s :message %s}"
-                                     connection-type
-                                     (:name database)
-                                     (:id database)
-                                     reason
-                                     humanized-message))
+        (log/error (u/format-color :red "Health check [%s]: failure {:id %d :reason %s :message %s}"
+                                   connection-type
+                                   (:id database)
+                                   reason
+                                   humanized-message))
         (analytics/inc! :metabase-database/status {:driver engine :healthy false :reason reason :connection-type connection-type}))
       false)))
 
@@ -310,7 +309,7 @@
    - cleans-up ambiguous legacy db-details"
   [{:keys [engine] :as database}]
   (when-not (or (:is_audit database) (:is_sample database))
-    (log/info (u/format-color :cyan "Health check: queueing %s {:id %d}" (:name database) (:id database)))
+    (log/info (u/format-color :cyan "Health check: queueing database {:id %d}" (:id database)))
     (quick-task/submit-task!
      (fn []
        (let [details     (maybe-test-and-migrate-details! database)
@@ -323,12 +322,12 @@
            (let [provider (provider-detection/detect-provider-from-database database)]
              (when (not= provider (:provider_name database))
                (try
-                 (log/info (u/format-color :blue "Provider detection: updating %s {:id %d} from '%s' to '%s'"
-                                           (:name database) (:id database)
+                 (log/info (u/format-color :blue "Provider detection: updating database {:id %d} from '%s' to '%s'"
+                                           (:id database)
                                            (:provider_name database) provider))
                  (t2/update! :model/Database (:id database) {:provider_name provider})
                  (catch Throwable provider-e
-                   (log/warnf provider-e "Error during provider detection for database {:id %d}" (:id database)))))))
+                   (log/warnf "Error during provider detection for database {:id %d}: %s" (:id database) (ex-message provider-e)))))))
          (when (driver.conn/database-write-data-details lib-db)
            (let [write-details (driver.conn/without-resolution-telemetry
                                 (driver.conn/with-write-connection
@@ -340,11 +339,35 @@
                                   (driver.conn/effective-details database)))]
              (check-connection! database driver engine-str (assoc admin-details :engine engine-str) "admin"))))))))
 
+(defn- health-check-candidates
+  "The databases to health check at startup: one representative per unique engine — the lowest-id regular database of
+  each engine — rather than every database. The health signal feeds the per-driver `:metabase-database/status`
+  metrics, so checking hundreds of same-engine databases at startup mostly re-measures the same driver stack while
+  hammering the warehouses with connection attempts. Audit/sample databases are excluded here (rather than relying on
+  the guard in [[health-check-database!]]) so they can never claim an engine's representative slot and starve a real
+  database of its check; router destinations are excluded because they can be very numerous and are only reachable
+  through their router.
+
+  The representative ids are aggregated in the database first, and only those rows are fetched as model instances:
+  instances with 3k+ databases exist in the wild, and realizing every Database row (including details decryption)
+  just to pick one per engine would defeat the point."
+  []
+  (let [ids (map :id (t2/query {:select   [[:%min.id :id]]
+                                :from     [(t2/table-name :model/Database)]
+                                :where    [:and
+                                           [:= :is_audit false]
+                                           [:= :is_sample false]
+                                           [:= :router_database_id nil]]
+                                :group-by [:engine]}))]
+    (when (seq ids)
+      (t2/select :model/Database :id [:in ids]))))
+
 (defn check-health!
-  "Health checks databases connected to metabase asynchronously using a thread pool."
+  "Health checks databases connected to metabase asynchronously using a thread pool. Only one database per unique
+  engine is checked -- see [[health-check-candidates]]."
   []
   (analytics/clear! :metabase-database/status)
-  (doseq [database (t2/select :model/Database)]
+  (doseq [database (health-check-candidates)]
     (health-check-database! database)))
 
 ;; TODO - something like NSNotificationCenter in Objective-C would be really really useful here so things that want to
@@ -356,7 +379,7 @@
   (try
     ((requiring-resolve 'metabase.sync.task.sync-databases/unschedule-tasks-for-db!) database)
     (catch Throwable e
-      (log/error e "Error unscheduling tasks for DB."))))
+      (log/errorf "Error unscheduling tasks for DB: %s" (ex-message e)))))
 
 ;; TODO -- consider whether this should live HERE or inside the `permissions` module.
 (defn- set-new-database-permissions!
@@ -411,26 +434,34 @@
   {:pre [(pos-int? database-id)]}
   ;; Field has `define-before-delete` deleting children, but we'll delete them all at once because they refer same
   ;; database - iteratively, deleting those that no one depends on first
-  (loop []
-    (let [deleted (t2/query-one
-                   {:delete-from (t2/table-name :model/Field)
-                    :where
-                    [:and
-                     [:in :table_id {:from   [(t2/table-name :model/Table)]
-                                     :select [:id]
-                                     :where  [:= :db_id database-id]}]
-                     ;; Double-wrapped subquery to work around MySQL limitation
-                     [:not-in :id {:select [:parent_id]
-                                   :from   [[{:select [:parent_id]
-                                              :from   [(t2/table-name :model/Field)]
-                                              :where  [:and
-                                                       [:not= :parent_id nil]
-                                                       [:in :table_id {:from   [(t2/table-name :model/Table)]
-                                                                       :select [:id]
-                                                                       :where  [:= :db_id database-id]}]]}
-                                             :parent_fields]]}]]})]
-      (when (pos? deleted)
-        (recur)))))
+  (let [table-ids-query {:from   [(t2/table-name :model/Table)]
+                         :select [:id]
+                         :where  [:= :db_id database-id]}]
+    ;; Avoid issuing the DELETE when no Fields exist. Keep this check non-locking: locking an empty range on MySQL
+    ;; recreates the contention this guard avoids. A concurrent sync can race this check, but the foreign keys preserve
+    ;; integrity by rejecting the Database deletion if it introduces nested Fields after the transaction snapshot.
+    (when (t2/exists? :model/Field :table_id [:in table-ids-query])
+      (let [no-children-clause (if (= (mdb/db-type) :mysql)
+                                 ;; double-wrapped subquery to work around the MySQL restriction on selecting from the
+                                 ;; DELETE target
+                                 [:not-in :id {:select [:parent_id]
+                                               :from   [[{:select [:parent_id]
+                                                          :from   [(t2/table-name :model/Field)]
+                                                          :where  [:and
+                                                                   [:not= :parent_id nil]
+                                                                   [:in :table_id table-ids-query]]}
+                                                         :parent_fields]]}]
+                                 [:not [:exists {:select [1]
+                                                 :from   [[(t2/table-name :model/Field) :child_field]]
+                                                 :where  [:= :child_field.parent_id :metabase_field.id]}]])]
+        (loop []
+          (let [deleted (t2/query-one
+                         {:delete-from (t2/table-name :model/Field)
+                          :where       [:and
+                                        [:in :table_id table-ids-query]
+                                        no-children-clause]})]
+            (when (pos? deleted)
+              (recur))))))))
 
 (t2/define-before-delete :model/Database
   [{id :id, driver :engine, :as database}]
@@ -468,7 +499,7 @@
   (try
     (driver/notify-database-updated driver database)
     (catch Throwable e
-      (log/error e "Error sending database deletion notification"))))
+      (log/errorf "Error sending database deletion notification: %s" (ex-message e)))))
 
 (defn- maybe-disable-uploads-for-all-dbs!
   "This function maintains the invariant that only one database can have uploads_enabled=true."
@@ -643,8 +674,8 @@
                             ;; there is an known issue with exception is ignored when render API response (#32822)
                             ;; If you see this error, you probably need to define a setting for `setting-name`.
                             ;; But ideally, we should resolve the above issue, and remove this try/catch
-                            (log/errorf e "Error checking the readability of %s setting. The setting will be hidden in API response."
-                                        setting-name)
+                            (log/errorf "Error checking the readability of %s setting. The setting will be hidden in API response. Error: %s"
+                                        setting-name (ex-message e))
                             ;; let's be conservative and hide it by defaults, if you want to see it,
                             ;; you need to define it :)
                             false)))
