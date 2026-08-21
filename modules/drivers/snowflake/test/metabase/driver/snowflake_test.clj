@@ -56,6 +56,17 @@
 
 (set! *warn-on-reflection* true)
 
+(deftest ^:parallel connection-hosts-test
+  (are [details expected] (= expected (driver/connection-hosts :snowflake details))
+    {:account "xy12345.us-east-2.aws"}
+    ["xy12345.us-east-2.aws.snowflakecomputing.com"]
+
+    {:account "xy12345" :use-hostname true :host "snowflake.example.com"}
+    ["snowflake.example.com"]
+
+    {:account "xy12345" :use-hostname true :host "https://snowflake.example.com:443"}
+    ["snowflake.example.com"]))
+
 (defn- query->native! [query]
   (let [check-sql-fn (fn [_ _ sql & _]
                        (throw (ex-info "done" {::native-query sql})))]
@@ -737,27 +748,28 @@
 (deftest can-change-from-password-test
   (mt/test-driver
     :snowflake
-    (let [details (:details (mt/db))
+    ;; the test DB authenticates with a private key, so give it a password to switch away from
+    (let [details (assoc (:details (mt/db)) :password "test-password" :use-password true)
           pk-key "testing"]
       (is (=?
            {:user some?
             :password some?
-            :private_key_file complement}
+            :private_key_file :hawk/key-not-present}
            (sql-jdbc.conn/connection-details->spec :snowflake details)))
       (is (=?
            {:user some?
             :password some?
-            :private_key_file complement}
+            :private_key_file :hawk/key-not-present}
            ;; Before `use-password` password took precedence over a key file
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :private-key-value pk-key))))
       (is (=?
            {:user some?
-            :password complement
+            :password :hawk/key-not-present
             :private_key_file some?}
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :password nil :private-key-value pk-key))))
       (is (=?
            {:user some?
-            :password complement
+            :password :hawk/key-not-present
             :private_key_file some?}
            (sql-jdbc.conn/connection-details->spec :snowflake (assoc details :use-password false :private-key-value pk-key)))))))
 
@@ -1186,7 +1198,7 @@
                                           :details {:use-password false
                                                     :password "abc"}}]
         (is (= {:password "abc" :use-password true} (:details db1)))
-        (is (=? {:password "abc" :private-key-id int? :use-password complement} (:details db2)))
+        (is (=? {:password "abc" :private-key-id int? :use-password :hawk/key-not-present} (:details db2)))
         (is (= {:password "abc" :use-password false} (:details db3)))))))
 
 (deftest ^:parallel normalize-write-data-details-test
@@ -1806,3 +1818,25 @@
                           (t/zone-offset "+02:00"))              "2026-07-08 01:02:03.123456789 +0200"
       "not temporal"                                             "not temporal"
       42                                                         42)))
+
+(deftest ^:parallel add-interval-honeysql-form-rejects-hostile-unit-test
+  (testing "the Snowflake DATEADD sink refuses a unit outside its closed allow-list"
+    (let [hostile (keyword "day) FROM t2 UNION SELECT pw FROM secrets --")]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid temporal unit"
+           (sql.qp/add-interval-honeysql-form :snowflake :some_col 1 hostile))))
+    (testing "and still compiles a legitimate unit to the expected DATEADD token"
+      (is (re-find #":raw \"day\""
+                   (pr-str (sql.qp/add-interval-honeysql-form :snowflake :some_col 1 :day)))))))
+
+(deftest ^:sequential relative-datetime-cast-test
+  (mt/test-driver :snowflake
+    (testing "the server-side relative-datetime CAST target must be a bare type name -- Snowflake rejects a quoted one
+             with `Unsupported data type`"
+      (let [mp    (mt/metadata-provider)
+            query (-> (lib/query mp (lib.metadata/table mp (mt/id :orders)))
+                      (lib/filter (lib/> (lib.metadata/field mp (mt/id :orders :created_at))
+                                         (lib/relative-datetime -30 :day))))]
+        (mt/with-native-query-testing-context query
+          (is (some? (mt/rows (qp/process-query query)))))))))

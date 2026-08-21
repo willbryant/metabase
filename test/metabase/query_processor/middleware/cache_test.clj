@@ -312,6 +312,19 @@
             (is (= :not-cached
                    (run-query :cache-strategy strategy)))))))))
 
+(deftest cancellation-mid-flight-does-not-throw-assertion-test
+  (testing (str "a cache-miss query canceled between the driver's respond callback and the reducer "
+                "returns nil silently #66655.")
+    (with-mock-cache! []
+      (let [qp (cache/maybe-return-cached-results qp.pipeline/*run*)]
+        (binding [driver.settings/*query-timeout-ms* 2000
+                  qp.pipeline/*canceled-chan*        (a/promise-chan)
+                  qp.pipeline/*execute*              (fn [_driver _query respond]
+                                                       (a/>!! qp.pipeline/*canceled-chan* ::test-cancel)
+                                                       (respond {} [[:toucan 1]]))]
+          (driver/with-driver :h2
+            (is (nil? (qp (test-query {}) qp.reducible/default-rff)))))))))
+
 (deftest not-eligible-refresh-deletes-outdated-entry-test
   (testing "when the lease winner's rerun is no longer cache-eligible (ran under min-duration-ms), the expired entry
             is deleted so other processes recompute instead of serving it stale for the rest of the lease window"
@@ -523,7 +536,7 @@
           (is (=? {:data          {}
                    :cache/details {:cached     true
                                    :updated_at #t "2020-02-19T02:31:07.798Z[UTC]"
-                                   :cache-hash some?}
+                                   :hash some?}
                    :row_count     8
                    :status        :completed}
                   result)))))))
@@ -617,9 +630,7 @@
                     cached-result   (qp/process-query query)]
                 (is (=? {:cache/details  {:cached     true
                                           :updated_at #t "2020-02-19T04:44:26.056Z[UTC]"
-                                          :hash       some?
-                                          ;; TODO: this check is not working if the key is not present in the data
-                                          :cache-hash some?}
+                                          :hash       some?}
                          :row_count 5
                          :status    :completed}
                         (dissoc cached-result :data))
@@ -725,10 +736,7 @@
                         (testing "results should be cached"
                           (is (=? {:cache/details {:cached     true
                                                    :updated_at #t "2020-02-19T04:44:26.056Z[UTC]"
-                                                   :hash       some?
-                                                   ;; TODO: this check is not working if the key is not present in the
-                                                   ;; data
-                                                   :cache-hash some?}
+                                                   :hash       some?}
                                    :row_count     5
                                    :status        :completed}
                                   (dissoc cached-results :data))))
@@ -750,9 +758,7 @@
                   (testing "\n\nOuter queries are cached *separately*"
                     (is (=? {:cache/details {:cached     true
                                              :updated_at #t "2020-02-19T04:44:26.056Z[UTC]"
-                                             :hash       some?
-                                             ;; TODO: this check is not working if the key is not present in the data
-                                             :cache-hash some?}
+                                             :hash       some?}
                              :row_count     5
                              :status        :completed}
                             (dissoc rerun-outer1 :data))
@@ -822,10 +828,7 @@
                         (testing "results should be cached"
                           (is (=? {:cache/details  {:cached     true
                                                     :updated_at #t "2020-02-19T04:44:26.056Z[UTC]"
-                                                    :hash       some?
-                                                    ;; TODO: this check is not working if the key is not present in the
-                                                    ;; data
-                                                    :cache-hash some?}
+                                                    :hash       some?}
                                    :row_count 5
                                    :status    :completed}
                                   (dissoc cached-results :data))))
@@ -967,7 +970,7 @@
                 (request/with-current-user (mt/user->id :crowberto)
                   (is (=? {:cache/details {:cached     true
                                            :updated_at some?
-                                           :cache-hash some?}}
+                                           :hash some?}}
                           (run-forbidden-query)))))
               (testing "Run query as regular user, should get perms Exception even though result is cached"
                 (is (thrown-with-msg?
