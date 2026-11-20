@@ -4,6 +4,7 @@
    [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase.config.core :as config]
+   [metabase.lib-be.core :as lib-be]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
    [metabase.permissions.core :as perms]
@@ -185,9 +186,10 @@
                   (is (some #(= "changed the source." (:description %)) revisions))))
               (mt/with-data-analyst-role! (mt/user->id :rasta)
                 (mt/with-restored-data-perms!
-                  ;; rasta may query the transform's current source database but not its previous one
+                  ;; rasta holds the transforms entitlement on the current source database but none on the prior one
                   (data-perms/set-database-permission! (perms-group/all-users) y-db-id :perms/view-data :unrestricted)
-                  (data-perms/set-database-permission! (perms-group/all-users) y-db-id :perms/create-queries :query-builder)
+                  (data-perms/set-database-permission! (perms-group/all-users) y-db-id :perms/create-queries :query-builder-and-native)
+                  (data-perms/set-database-permission! (perms-group/all-users) y-db-id :perms/transforms :yes)
                   (data-perms/set-database-permission! (perms-group/all-users) x-db-id :perms/create-queries :no)
                   (testing "an analyst entitled only to the current source can still read the transform"
                     (let [revisions (list-fn :rasta 200)]
@@ -300,6 +302,18 @@
           ;; with-non-admin-groups-no-root-collection-perms wrapper)
           (is (= "You don't have permissions to do that."
                  (mt/user-http-request :rasta :post "revision/revert" update-req))))))))
+
+(deftest revert-card-to-revision-with-sensitive-field-test
+  (testing "a non-admin can revert a card to a revision that references a :sensitive column (SEC-829)"
+    (mt/with-temp [:model/Card {card-id :id} {:creator_id    (mt/user->id :crowberto)
+                                              :dataset_query (mt/mbql-query users {:fields [$id $password]})}]
+      (create-card-revision! card-id true :crowberto)
+      (t2/update! :model/Card :id card-id {:dataset_query (mt/mbql-query users {:fields [$id]})})
+      (create-card-revision! card-id false :crowberto)
+      (let [[_ {earlier-revision-id :id}] (revision/revisions :model/Card card-id)]
+        (mt/user-http-request :rasta :post 200 "revision/revert"
+                              {:entity :card, :id card-id, :revision_id earlier-revision-id})
+        (is (= 2 (-> (t2/select-one :model/Card :id card-id) :dataset_query lib/fields count)))))))
 
 (deftest dashboard-revision-description-test
   (testing "revision description for dashboard are generated correctly"
@@ -791,9 +805,9 @@
                                               :dataset_query (t2/select-one-fn :dataset_query :model/Card :id card-id)
                                               :parameters    [{:id "pid" :name "p" :slug "p" :type "string/="
                                                                :values_query_type "list" :target target}]})]
-                  (is (re-find #"You must have data permissions"
-                               (:cause (mt/user-http-request :rasta :post 403 "revision/revert"
-                                                             {:entity "card", :id card-id, :revision_id revision-id}))))
+                  (is (= "You must have data permissions to add a parameter referencing this Field."
+                         (mt/user-http-request :rasta :post 403 "revision/revert"
+                                               {:entity "card", :id card-id, :revision_id revision-id})))
                   (is (empty? (t2/select-one-fn :parameters :model/Card :id card-id)))))
               (testing "and on a Dashboard, through a dashcard's parameter mappings"
                 (let [revision-id (revision! "Dashboard" dashboard-id
@@ -803,9 +817,9 @@
                                                        :parameter_mappings [{:parameter_id "pid"
                                                                              :card_id      card-id
                                                                              :target       target}]}]})]
-                  (is (re-find #"You must have data permissions"
-                               (:cause (mt/user-http-request :rasta :post 403 "revision/revert"
-                                                             {:entity "dashboard", :id dashboard-id, :revision_id revision-id}))))
+                  (is (= "You must have data permissions to add a parameter referencing this Field."
+                         (mt/user-http-request :rasta :post 403 "revision/revert"
+                                               {:entity "dashboard", :id dashboard-id, :revision_id revision-id})))
                   (is (empty? (t2/select-one-fn :parameter_mappings :model/DashboardCard :id dashcard-id))))))))))))
 
 (deftest revert-cannot-relocate-into-an-unwritable-collection-test
@@ -1216,6 +1230,73 @@
                                                          :database database-id}}}
                     :description  "created this."}]
                   (mt/user-http-request :crowberto :get 200 (format "revision/segment/%d" id)))))))))
+
+(defn- segment-definition
+  "Build an MBQL 5 segment definition (a single-stage filtered query on `table-id`) via lib."
+  [table-id filter-field-id]
+  (let [mp (lib-be/application-database-metadata-provider (t2/select-one-fn :db_id :model/Table :id table-id))]
+    (-> (lib/query mp (lib.metadata/table mp table-id))
+        (lib/filter (lib/> (lib.metadata/field mp filter-field-id) 0)))))
+
+(defn- measure-definition
+  "Build an MBQL 5 measure definition (a count aggregation on `table-id`) via lib."
+  [table-id]
+  (let [mp (lib-be/application-database-metadata-provider (t2/select-one-fn :db_id :model/Table :id table-id))]
+    (-> (lib/query mp (lib.metadata/table mp table-id))
+        (lib/aggregate (lib/count)))))
+
+(deftest segment-revert-definition-table-permissions-test
+  (testing "POST /api/revision/revert <Segment>"
+    (mt/with-temp
+      [:model/Segment  {:keys [id]}             {:table_id   (mt/id :venues)
+                                                 :definition (segment-definition (mt/id :venues) (mt/id :venues :price))}
+       :model/Revision {users-revision-id :id}  {:model    "Segment"
+                                                 :model_id id
+                                                 :object   {:name       "Users segment"
+                                                            :table_id   (mt/id :venues)
+                                                            :definition (segment-definition (mt/id :users) (mt/id :users :id))}}
+       :model/Revision {no-def-revision-id :id} {:model    "Segment"
+                                                 :model_id id
+                                                 :object   {:name     "No definition"
+                                                            :table_id (mt/id :users)}}]
+      (mt/with-data-analyst-role! (mt/user->id :rasta)
+        (mt/with-no-data-perms-for-all-users!
+          (mt/with-perm-for-group-and-table! (u/the-id (perms-group/all-users)) (mt/id :venues) :perms/view-data :unrestricted
+            (testing "write perms are checked against the table of the restored revision's definition, not its stored :table_id"
+              (is (= "You don't have permissions to do that."
+                     (mt/user-http-request :rasta :post 403 "revision/revert"
+                                           {:id id, :entity "segment", :revision_id users-revision-id}))))
+            (testing "when the restored revision has no definition, perms fall back to its stored :table_id"
+              (is (= "You don't have permissions to do that."
+                     (mt/user-http-request :rasta :post 403 "revision/revert"
+                                           {:id id, :entity "segment", :revision_id no-def-revision-id}))))))))))
+
+(deftest measure-revert-definition-table-permissions-test
+  (testing "POST /api/revision/revert <Measure>"
+    (mt/with-temp
+      [:model/Measure  {:keys [id]}             {:name       "Venue count"
+                                                 :table_id   (mt/id :venues)
+                                                 :definition (measure-definition (mt/id :venues))}
+       :model/Revision {users-revision-id :id}  {:model    "Measure"
+                                                 :model_id id
+                                                 :object   {:name       "Users count"
+                                                            :table_id   (mt/id :venues)
+                                                            :definition (measure-definition (mt/id :users))}}
+       :model/Revision {no-def-revision-id :id} {:model    "Measure"
+                                                 :model_id id
+                                                 :object   {:name     "No definition"
+                                                            :table_id (mt/id :users)}}]
+      (mt/with-data-analyst-role! (mt/user->id :rasta)
+        (mt/with-no-data-perms-for-all-users!
+          (mt/with-perm-for-group-and-table! (u/the-id (perms-group/all-users)) (mt/id :venues) :perms/view-data :unrestricted
+            (testing "write perms are checked against the table of the restored revision's definition, not its stored :table_id"
+              (is (= "You don't have permissions to do that."
+                     (mt/user-http-request :rasta :post 403 "revision/revert"
+                                           {:id id, :entity "measure", :revision_id users-revision-id}))))
+            (testing "when the restored revision has no definition, perms fall back to its stored :table_id"
+              (is (= "You don't have permissions to do that."
+                     (mt/user-http-request :rasta :post 403 "revision/revert"
+                                           {:id id, :entity "measure", :revision_id no-def-revision-id}))))))))))
 
 (deftest dashboard-double-revert-test
   (testing "Reverting past an add/delete-card boundary then reverting forward again both succeed (#15237)"

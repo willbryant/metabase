@@ -16,6 +16,7 @@
    [metabase.search.ingestion :as search.ingestion]
    [metabase.test :as mt]
    [metabase.transforms.feature-gating :as transforms.gating]
+   [metabase.util.honey-sql-2 :as h2x]
    [toucan2.core :as t2]))
 
 (deftest ^:parallel parse-engine-test
@@ -46,6 +47,7 @@
                                          :is-superuser?         true
                                          :is-impersonated-user? false
                                          :is-sandboxed-user?    false
+                                         :is-routed-user?       false
                                          :models                nil
                                          :search-string         "x"})]
     (is (not-any? ctx [:vector-search-strategy :vector-search-ef-search :vector-search-max-scan-tuples
@@ -54,21 +56,21 @@
 (deftest ^:parallel order-clause-test
   (testing "it includes all columns and normalizes the query"
     (is (= [[:case
-             [:like [:lower :model]             "%foo%"] [:inline 0]
-             [:like [:lower :name]              "%foo%"] [:inline 0]
-             [:like [:lower :display_name]      "%foo%"] [:inline 0]
-             [:like [:lower :description]       "%foo%"] [:inline 0]
-             [:like [:lower :collection_name]   "%foo%"] [:inline 0]
-             [:like [:lower :collection_type]   "%foo%"] [:inline 0]
-             [:like [:lower :display]           "%foo%"] [:inline 0]
-             [:like [:lower :display_type]      "%foo%"] [:inline 0]
-             [:like [:lower :table_schema]        "%foo%"] [:inline 0]
-             [:like [:lower :table_name]          "%foo%"] [:inline 0]
-             [:like [:lower :table_display_name]  "%foo%"] [:inline 0]
-             [:like [:lower :table_description]   "%foo%"] [:inline 0]
-             [:like [:lower :database_name]     "%foo%"] [:inline 0]
-             [:like [:lower :model_name]        "%foo%"] [:inline 0]
-             [:like [:lower :dataset_query]     "%foo%"] [:inline 0]
+             [:like [:lower :model] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :display_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :description] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :collection_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :collection_type] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :display] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :display_type] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :table_schema] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :table_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :table_display_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :table_description] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :database_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :model_name] (h2x/like-substring "foo")] [:inline 0]
+             [:like [:lower :dataset_query] (h2x/like-substring "foo")] [:inline 0]
              :else [:inline 1]]]
            (search.legacy/order-clause "Foo")))))
 
@@ -103,6 +105,9 @@
                                                  :models                      search.config/all-models
                                                  :current-user-id             (mt/user->id :crowberto)
                                                  :is-superuser?               true
+                                                 :is-impersonated-user?       false
+                                                 :is-sandboxed-user?          false
+                                                 :is-routed-user?             false
                                                  :is-data-analyst?            false
                                                  :current-user-perms          #{"/"}
                                                  :model-ancestors?            false
@@ -183,6 +188,9 @@
                                                                   :created-at         created-at
                                                                   :current-user-id    (mt/user->id :crowberto)
                                                                   :is-superuser?      true
+                                                                  :is-impersonated-user? false
+                                                                  :is-sandboxed-user? false
+                                                                  :is-routed-user?    false
                                                                   :current-user-perms @api/*current-user-permissions-set*}))
                                             :data
                                             (map (juxt :model :id))
@@ -269,6 +277,9 @@
                                                                   :last-edited-at     last-edited-at
                                                                   :current-user-id    (mt/user->id :crowberto)
                                                                   :is-superuser?      true
+                                                                  :is-impersonated-user? false
+                                                                  :is-sandboxed-user? false
+                                                                  :is-routed-user?    false
                                                                   :current-user-perms @api/*current-user-permissions-set*}))
                                             :data
                                             (map (juxt :model :id))
@@ -314,6 +325,9 @@
                                                 :models             search.config/all-models
                                                 :current-user-id    (mt/user->id :crowberto)
                                                 :is-superuser?      true
+                                                :is-impersonated-user? false
+                                                :is-sandboxed-user? false
+                                                :is-routed-user?    false
                                                 :current-user-perms @api/*current-user-permissions-set*}))
                           :data
                           (map (juxt :model :id))
@@ -328,6 +342,9 @@
                                                 :models             search.config/all-models
                                                 :current-user-id    (mt/user->id :crowberto)
                                                 :is-superuser?      true
+                                                :is-impersonated-user? false
+                                                :is-sandboxed-user? false
+                                                :is-routed-user?    false
                                                 :current-user-perms @api/*current-user-permissions-set*}))
                           :data
                           (map (juxt :model :id))
@@ -364,6 +381,9 @@
                                                     :models             search.config/all-models
                                                     :current-user-id    (mt/user->id :crowberto)
                                                     :is-superuser?      true
+                                                    :is-impersonated-user? false
+                                                    :is-sandboxed-user? false
+                                                    :is-routed-user?    false
                                                     :current-user-perms @api/*current-user-permissions-set*}))
                               :data
                               (map (juxt :model :id))

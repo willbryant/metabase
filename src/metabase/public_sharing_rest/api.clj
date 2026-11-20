@@ -79,6 +79,14 @@
               (repeatedly (count (lib/aggregations query -1)) lib/count))
       (lib/native-query query "-"))))
 
+(defn keep-param-fields-for-parameters
+  "Keep only the `:param_fields` entries keyed by the ids of the object's own `:parameters`. Entries keyed by anything
+  else — e.g. a native card's template-tag id with no matching parameter — have no widget to power, so they fail
+  closed."
+  [card-or-dashboard]
+  (m/update-existing card-or-dashboard :param_fields
+                     #(select-keys % (into #{} (map :id) (:parameters card-or-dashboard)))))
+
 (defn remove-card-non-public-columns
   "Remove everything from public `card` that shouldn't be visible to the general public.
 
@@ -97,7 +105,8 @@
                        :dataset_query])
          (update :dataset_query (fn [query]
                                   (cond-> query
-                                    (seq query) blank-dataset-query)))))))
+                                    (seq query) blank-dataset-query)))
+         params/remove-param-fields-non-public-columns))))
 
 (defn public-card
   "Return the public Card with the given `card-id` (plus any extra key-value `conditions`), removing all columns that
@@ -109,6 +118,7 @@
                               :id card-id, :archived false, conditions))
         combine-parameters-and-template-tags
         (t2/hydrate :param_fields)
+        keep-param-fields-for-parameters
         remove-card-non-public-columns)))
 
 (defn- card-with-uuid [uuid] (public-card (public-sharing/public-uuid->id :model/Card uuid)))
@@ -142,14 +152,24 @@
     [:json_query :parameters]
     :status]))
 
-(defmethod transform-qp-result :failed
-  [{error-type :error_type, :as results}]
-  ;; if the query failed instead, unless the error type is specified and is EXPLICITLY allowed to be shown for embeds,
-  ;; instead of returning anything about the query just return a generic error message
+(defn error-response
+  "Reduce a query `error` -- the QP's formatted error response, or the `Throwable->map` of an exception that escaped
+  it -- to what public and embedded endpoints are allowed to return: the status and error type, and a generic message
+  in place of the original unless the error type is EXPLICITLY allowed to be shown in embeds. Nothing about the query
+  itself gets through.
+
+  [[metabase.api-routes.routes]] applies this to every error written by a streaming response under the public and
+  embedding routes."
+  [{error-type :error_type, :as error}]
   (merge
-   (select-keys results [:status :error :error_type])
+   {:status :failed}
+   (select-keys error [:status :error :error_type])
    (when-not (qp.error-type/show-in-embeds? error-type)
      {:error (tru "An error occurred while running the query.")})))
+
+(defmethod transform-qp-result :failed
+  [results]
+  (error-response results))
 
 (defn- process-query-for-card-with-id-run-fn
   "Create the `:make-run` function used for [[process-query-for-card-with-id]] and [[process-query-for-dashcard]]."
@@ -278,6 +298,8 @@
             params/*field-id-context* (atom params/empty-field-id-context)]
     (-> (api/check-404 (apply t2/select-one [:model/Dashboard :name :description :id :parameters :auto_apply_filters :width], :id dashboard-id, :archived false, conditions))
         (t2/hydrate [:dashcards :card :series :dashcard/action] :tabs :param_fields)
+        keep-param-fields-for-parameters
+        params/remove-param-fields-non-public-columns
         api.dashboard/add-query-average-durations
         (update :dashcards (fn [dashcards]
                              (for [dashcard dashcards]
@@ -466,7 +488,10 @@
           (request/as-admin
             ;; Undo middleware string->keyword coercion. Refuse `:http` actions on the anonymous execute path.
             (actions/execute-dashcard! dashboard-id dashcard-id (update-keys parameters name)
-                                       {:allow-http-actions? false})))))))
+                                       ;; `as-admin` grants perms but leaves the user nil, so the audit row has no
+                                       ;; executor; the context is what says the run came from a public link
+                                       {:allow-http-actions? false
+                                        :context             :public-action-execute})))))))
 
 (defn- iframe
   "Return an `<iframe>` HTML fragment to embed a public page."
@@ -710,7 +735,9 @@
                                      :action_id (:id action)})
             ;; Undo middleware string->keyword coercion. Refuse `:http` actions on the anonymous execute path.
             (actions/execute-action! action (update-keys parameters name)
-                                     {:allow-http-actions? false})))))))
+                                     ;; see the note on the public dashcard endpoint above
+                                     {:allow-http-actions? false
+                                      :context             :public-action-execute})))))))
 
 ;;; ----------------------------------------------------- Map Tiles --------------------------------------------------
 

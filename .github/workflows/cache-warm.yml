@@ -1,4 +1,4 @@
-# Writes the three large dependency caches. Every other job restores them and none of them writes.
+# Writes the shared dependency caches. Every other job restores them and none of them writes.
 #
 # A single writer rather than the usual let-every-job-save arrangement, because a pull request here fans
 # out to roughly 200 jobs, ~75 of which install Cypress. Letting each of those save would have them all
@@ -13,7 +13,7 @@
 # at it, and master's copy backs up every ref that has none of its own.
 #
 # Keys are content-derived (see .github/scripts/cache-keys.sh), so a push whose dependencies already have
-# an entry does nothing but three lookups. There is no cron: nothing here is keyed by date.
+# an entry does nothing but four lookups. There is no cron: nothing here is keyed by date.
 #
 #
 # PRINCIPLES:
@@ -45,8 +45,11 @@ jobs:
     if: ${{ github.repository == 'metabase/metabase' }}
     runs-on: ${{ vars.DEFAULT_RUNNER_KEY }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write # prune older dependency caches
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache spec
         id: cache-spec
@@ -69,6 +72,13 @@ jobs:
           path: ${{ steps.cache-spec.outputs.bun-store-path }}
           key: ${{ steps.cache-spec.outputs.bun-store-key }}
           lookup-only: true
+      - name: Look up Clojure CLI
+        id: clojure-lookup
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.cache-spec.outputs.clojure-path }}
+          key: ${{ steps.cache-spec.outputs.clojure-key }}
+          lookup-only: true
       - name: Look up Cypress binary
         id: cypress-lookup
         uses: actions/cache/restore@v5
@@ -77,9 +87,18 @@ jobs:
           key: ${{ steps.cache-spec.outputs.cypress-key }}
           lookup-only: true
 
+      # Also runs when only the Clojure CLI entry is missing: installing it is what there is to save,
+      # and the pre-resolve below needs it either way.
       - name: Prepare backend
-        if: steps.m2-lookup.outputs.cache-hit != 'true'
+        if: steps.m2-lookup.outputs.cache-hit != 'true' || steps.clojure-lookup.outputs.cache-hit != 'true'
         uses: ./.github/actions/prepare-backend
+
+      - name: Save Clojure CLI
+        if: steps.clojure-lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.cache-spec.outputs.clojure-path }}
+          key: ${{ steps.cache-spec.outputs.clojure-key }}
 
       # Pre-resolve every Clojure dependency classpath CI actually uses, so the saved cache is a SUPERSET
       # of what each job resolves at runtime.
@@ -154,6 +173,30 @@ jobs:
         with:
           path: ${{ steps.cache-spec.outputs.bun-store-path }}
           key: ${{ steps.cache-spec.outputs.bun-store-key }}
+
+      # Each M2 and bun store entry is built on top of the previous one restored by prefix, so the newest
+      # is a superset of the older ones on this ref. A pull request whose exact key is gone falls back to the
+      # newest. Without this, every dependency change leaves an entry behind. Entries read in the last 30
+      # minutes are left for a later run, so a job mid-restore never loses its download.
+      - name: Prune older dependency caches
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIXES: |
+            ${{ steps.cache-spec.outputs.m2-restore-key }}
+            ${{ steps.cache-spec.outputs.bun-store-restore-key }}
+        run: |
+          set -euo pipefail
+          for prefix in $PREFIXES; do
+            gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "$prefix" \
+              --sort created_at --order desc --limit 100 --json id,key,lastAccessedAt \
+              --jq '.[1:][] | select(now - (.lastAccessedAt | sub("\\.[0-9]+Z$"; "Z") | fromdate) > 1800) | "\(.id) \(.key)"' |
+              while read -r id key; do
+                echo "Deleting $key ($id)"
+                gh cache delete --repo "$GITHUB_REPOSITORY" "$id"
+              done
+          done
 
       - name: Ensure that Cypress executable is ready
         if: steps.cypress-lookup.outputs.cache-hit != 'true'

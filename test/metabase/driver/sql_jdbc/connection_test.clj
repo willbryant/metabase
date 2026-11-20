@@ -11,6 +11,7 @@
    [clojure.test :refer :all]
    [java-time.api :as t]
    [metabase.app-db.core :as mdb]
+   [metabase.auth-provider.core :as auth-provider]
    [metabase.config.core :as config]
    [metabase.core.core :as mbc]
    [metabase.driver :as driver]
@@ -38,7 +39,8 @@
    [toucan2.core :as t2])
   (:import
    (com.google.common.cache Cache)
-   (com.mchange.v2.c3p0 DataSources)
+   (com.mchange.v2.c3p0 C3P0ProxyConnection ComboPooledDataSource DataSources)
+   (java.sql DriverManager)
    (org.h2.tools Server)))
 
 (set! *warn-on-reflection* true)
@@ -62,6 +64,50 @@
                                                               :user   "rasta"}))))
     (testing "Things that you can connect to, but are not DBs, should fail"
       (is (not (driver.u/can-connect-with-details? :postgres {:host "google.com", :port 80}))))))
+
+(deftest disallowed-connection-parameters-checked-before-connecting-test
+  ;; `validate-db-details!` only runs when a connection is tested. A database that never was -- saved before a
+  ;; parameter was disallowed, imported through serialization, provisioned from a config file -- must still be refused
+  ;; when its pool is created.
+  (mt/test-drivers (mt/normal-driver-select {:+parent :sql-jdbc})
+    (doseq [details [{:host "db.example.com" :port 5432 :dbname "db" :additional-options "socketFactory=a.b.C"}
+                     ;; several drivers hand detail keys they do not recognize to the client as connection properties
+                     {:host "db.example.com" :port 5432 :dbname "db" :sslfactory "a.b.C"}]]
+      (testing (pr-str details)
+        (testing "when a connection pool is created"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"dangerous"
+               (#'sql-jdbc.conn/create-pool! (t2/instance :model/Database {:id      Integer/MAX_VALUE
+                                                                           :engine  driver/*driver*
+                                                                           :details details})))))
+        (testing "when a connection is tested"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"dangerous"
+               (sql-jdbc.conn/with-connection-spec-for-testing-connection [_spec [driver/*driver* details]]
+                 ::reached))))))))
+
+(deftest disallowed-connection-parameters-from-auth-provider-test
+  ;; an auth provider's response is merged into the details (see [[driver/incorporate-auth-provider-details]]), so it
+  ;; can set a connection parameter the user never could
+  (mt/test-drivers (mt/normal-driver-select {:+parent :sql-jdbc})
+    (let [details {:host              "db.example.com"
+                   :port              5432
+                   :dbname            "db"
+                   :use-auth-provider true
+                   :auth-provider     "http"
+                   :http-auth-url     "https://auth.example.com/token"}]
+      (mt/with-dynamic-fn-redefs [auth-provider/fetch-auth (constantly {:sslfactory "a.b.C"})]
+        (testing "when a connection pool is created"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"dangerous"
+               (#'sql-jdbc.conn/create-pool! (t2/instance :model/Database {:id      Integer/MAX_VALUE
+                                                                           :engine  driver/*driver*
+                                                                           :details details})))))
+        (testing "when a connection is tested"
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"dangerous"
+               (sql-jdbc.conn/with-connection-spec-for-testing-connection [_spec [driver/*driver* details]]
+                 ::reached))))))))
 
 (deftest db->pooled-connection-spec-test
   (mt/test-driver :h2
@@ -1026,3 +1072,38 @@
     (is (integer? (#'sql-jdbc.conn/default-ssh-tunnel-target-port driver/*driver*))))
   (mt/test-drivers (mt/normal-driver-select {:+parent :sql-jdbc :-fns [has-default-port?]})
     (is (nil? (#'sql-jdbc.conn/default-ssh-tunnel-target-port driver/*driver*)))))
+
+(def ^:private raw-connection-to-string-method
+  (.getMethod Object "toString" (make-array Class 0)))
+
+(defn- raw-connection-identity
+  "Identify the physical Connection behind a c3p0 proxy, to tell a recycled connection from a freshly acquired one."
+  [^C3P0ProxyConnection conn]
+  (.rawConnectionOperation conn
+                           raw-connection-to-string-method
+                           C3P0ProxyConnection/RAW_CONNECTION
+                           (make-array Object 0)))
+
+(deftest discard-pooled-connection-test
+  (testing "discarding destroys the physical Connection, so the pool acquires a fresh one rather than recycling it"
+    (with-open [ds (doto (ComboPooledDataSource.)
+                     (.setJdbcUrl "jdbc:h2:mem:discard-pooled-connection-test;DB_CLOSE_DELAY=-1")
+                     (.setInitialPoolSize 1)
+                     (.setMinPoolSize 1)
+                     (.setMaxPoolSize 1))]
+      (letfn [(checked-out-identity []
+                (with-open [conn (.getConnection ds)]
+                  (raw-connection-identity conn)))]
+        (let [before (checked-out-identity)]
+          (testing "a plain check-in/check-out cycle hands back the same physical Connection"
+            (is (= before (checked-out-identity))))
+          (with-open [conn (.getConnection ds)]
+            (sql-jdbc.conn/discard-pooled-connection! conn))
+          (testing "after discarding, the next checkout is a different physical Connection"
+            (is (not= before (checked-out-identity)))))))))
+
+(deftest discard-pooled-connection-leaves-unpooled-connection-alone-test
+  (testing "a Connection with no pool behind it has no next query to poison, so it is left open"
+    (with-open [conn (DriverManager/getConnection "jdbc:h2:mem:discard-unpooled-test;DB_CLOSE_DELAY=-1")]
+      (sql-jdbc.conn/discard-pooled-connection! conn)
+      (is (not (.isClosed conn))))))

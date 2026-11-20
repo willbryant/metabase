@@ -113,10 +113,11 @@
 (defn- throw-scim-error
   [status message]
   (throw (ex-info message
-                  {:schemas     [error-schema-uri]
-                   :detail      message
-                   :status      status
-                   :status-code status})))
+                  {:schemas       [error-schema-uri]
+                   :detail        message
+                   :status        status
+                   :status-code   status
+                   :response/keys #{:schemas :detail :status}})))
 
 (defn- scim-response
   "Wraps an object in a response with the correct SCIM content-type. Status defaults to 200 unless otherwise specified."
@@ -291,7 +292,8 @@
 #_{:clj-kondo/ignore [:metabase/validate-defendpoint-has-response-schema]}
 (api.macros/defendpoint :put ["/Users/:id" :id #"[^/]+"]
   "Update a user."
-  [{:keys [id]}
+  [{:keys [id]} :- [:map
+                    [:id ms/NonBlankString]]
    _query-params
    scim-user :- SCIMUser]
   (with-prometheus-counters
@@ -310,10 +312,11 @@
           (catch Exception e
             (let [message (format "Error updating user: %s" (ex-message e))]
               (throw (ex-info message
-                              {:schemas     [error-schema-uri]
-                               :detail      message
-                               :status      400
-                               :status-code 400})))))))))
+                              {:schemas       [error-schema-uri]
+                               :detail        message
+                               :status        400
+                               :status-code   400
+                               :response/keys #{:schemas :detail :status}})))))))))
 
 (defn- patch->boolean
   "SCIM sends `active` as a JSON boolean, but clients in the wild send the strings \"true\"/\"false\" too. Anything
@@ -512,7 +515,8 @@
 #_{:clj-kondo/ignore [:metabase/validate-defendpoint-has-response-schema]}
 (api.macros/defendpoint :put ["/Groups/:id" :id #"[^/]+"]
   "Update a group."
-  [{:keys [id]}
+  [{:keys [id]} :- [:map
+                    [:id ms/NonBlankString]]
    _query-params
    scim-group :- SCIMGroup]
   (with-prometheus-counters

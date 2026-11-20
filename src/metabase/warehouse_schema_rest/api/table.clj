@@ -90,24 +90,28 @@
        [:can-query {:optional true} [:maybe ms/BooleanValue]]
        [:can-write {:optional true} [:maybe ms/BooleanValue]]
        [:include-transform-targets {:optional true} [:maybe ms/BooleanValue]]]]
-  (let [like       (fn [field pattern]
-                     (case (app-db/db-type)
-                       (:h2 :postgres) [:ilike field pattern]
-                       [::h2x/collate [:like field pattern] "utf8mb4_unicode_ci"]))
-        pattern    (some-> term
-                           (str/replace "\\" "\\\\")
-                           (str/replace "_" "\\_")
-                           (str/replace "%" "\\%")
-                           (str/replace "*" "%")
-                           (cond-> (not (str/ends-with? term "%")) (str "%")))
+  (let [db-type    (app-db/db-type)
+        ;; `*` is the user-facing wildcard; everything else in `term` has already been escaped to match literally
+        glob       (fn [escaped]
+                     (-> escaped
+                         (str/replace "*" "%")
+                         (cond-> (not (str/ends-with? term "*")) (str "%"))))
+        ci-pattern (fn [pattern]
+                     (case db-type
+                       (:h2 :postgres) pattern
+                       [::h2x/collate pattern "utf8mb4_unicode_ci"]))
+        like       (fn [field wrap]
+                     [(case db-type (:h2 :postgres) :ilike :like)
+                      field
+                      (h2x/like-pattern term (comp ci-pattern wrap glob))])
         where      (cond-> [:and (if include-transform-targets
                                    [:or [:= :active true] [:= :transform_target true]]
                                    [:= :active true])]
                      (not (str/blank? term)) (conj [:or
-                                                    (like :name pattern)
-                                                    (like :display_name pattern)
+                                                    (like :name identity)
+                                                    (like :display_name identity)
                                                     ;; match word starts after spaces e.g. 'ite' would match 'Order Item'
-                                                    (like :display_name (str "% " pattern))])
+                                                    (like :display_name #(str "% " %))])
                      visibility-type         (conj [:= :visibility_type visibility-type])
                      data-layer              (conj [:= :data_layer      (name data-layer)])
                      data-source             (conj [:= :data_source     (name data-source)])
@@ -193,6 +197,33 @@
                                (fn [response]
                                  (dissoc response :json_query :context :cached :average_execution_time))))))))))
 
+(def ^:private table-update-entries
+  "User-settable Table columns, as optional `:map` entries."
+  [[:display_name            {:optional true} [:maybe ms/NonBlankString]]
+   [:entity_type             {:optional true} [:maybe ms/EntityTypeKeywordOrString]]
+   [:visibility_type         {:optional true} [:maybe TableVisibilityType]]
+   [:description             {:optional true} [:maybe :string]]
+   [:caveats                 {:optional true} [:maybe :string]]
+   [:points_of_interest      {:optional true} [:maybe :string]]
+   [:show_in_getting_started {:optional true} [:maybe :boolean]]
+   [:field_order             {:optional true} [:maybe FieldOrder]]
+   [:data_authority          {:optional true} [:maybe ::data-authority-write]]
+   [:data_source             {:optional true} [:maybe :string]]
+   [:data_layer              {:optional true} [:maybe :string]]
+   [:owner_email             {:optional true} [:maybe :string]]
+   [:owner_user_id           {:optional true} [:maybe :int]]
+   [:collection_id           {:optional true} [:maybe ms/PositiveInt]]])
+
+(def ^:private TableUpdateBodySingle
+  "Body of `PUT /api/table/:id`."
+  (into [:map] table-update-entries))
+
+(def ^:private TableUpdateBodyBulk
+  "Body of the deprecated `PUT /api/table/`."
+  (into [:map
+         [:ids [:sequential ms/PositiveInt]]]
+        table-update-entries))
+
 (mu/defn ^:private update-table!*
   "Takes an existing table and the changes, updates in the database and optionally calls `table/update-field-positions!`
   if field positions have changed."
@@ -275,21 +306,7 @@
   [{:keys [id]} :- [:map
                     [:id ms/PositiveInt]]
    _query-params
-   body :- [:map
-            [:display_name            {:optional true} [:maybe ms/NonBlankString]]
-            [:entity_type             {:optional true} [:maybe ms/EntityTypeKeywordOrString]]
-            [:visibility_type         {:optional true} [:maybe TableVisibilityType]]
-            [:description             {:optional true} [:maybe :string]]
-            [:caveats                 {:optional true} [:maybe :string]]
-            [:points_of_interest      {:optional true} [:maybe :string]]
-            [:show_in_getting_started {:optional true} [:maybe :boolean]]
-            [:field_order             {:optional true} [:maybe FieldOrder]]
-            [:data_authority          {:optional true} [:maybe ::data-authority-write]]
-            [:data_source             {:optional true} [:maybe :string]]
-            [:data_layer              {:optional true} [:maybe :string]]
-            [:owner_email             {:optional true} [:maybe :string]]
-            [:owner_user_id           {:optional true} [:maybe :int]]
-            [:collection_id           {:optional true} [:maybe ms/PositiveInt]]]]
+   body :- TableUpdateBodySingle]
   (first (update-tables! [id] body)))
 
 ;; TODO (Cam 2025-11-25) please add a response schema to this API endpoint, it makes it easier for our customers to
@@ -299,23 +316,10 @@
 (api.macros/defendpoint :put "/"
   "Update all `Table` in `ids`.
 
-  Deprecated, should use PUT /table/edit from now on."
+  Deprecated: use `POST /api/data-studio/table/edit`."
   [_route-params
    _query-params
-   {:keys [ids], :as body} :- [:map
-                               [:ids                                      [:sequential ms/PositiveInt]]
-                               [:display_name            {:optional true} [:maybe ms/NonBlankString]]
-                               [:entity_type             {:optional true} [:maybe ms/EntityTypeKeywordOrString]]
-                               [:visibility_type         {:optional true} [:maybe TableVisibilityType]]
-                               [:description             {:optional true} [:maybe :string]]
-                               [:caveats                 {:optional true} [:maybe :string]]
-                               [:points_of_interest      {:optional true} [:maybe :string]]
-                               [:show_in_getting_started {:optional true} [:maybe :boolean]]
-                               [:data_authority          {:optional true} [:maybe ::data-authority-write]]
-                               [:data_source             {:optional true} [:maybe :string]]
-                               [:data_layer              {:optional true} [:maybe :string]]
-                               [:owner_email             {:optional true} [:maybe :string]]
-                               [:owner_user_id           {:optional true} [:maybe :int]]]]
+   {:keys [ids], :as body} :- TableUpdateBodyBulk]
   (update-tables! ids body))
 
 ;; TODO (Cam 10/28/25) -- fix this endpoint so it uses kebab-case for query parameters for consistency with the rest
@@ -488,14 +492,14 @@
   `::mc/default` keeps the extra parts, and the check below refuses them."
   [:and
    [:map
-    ["file"
+    [:file
      [:map
       [:filename :string]
       [:tempfile (ms/InstanceOfClass java.io.File)]]]
-    ["collection_id" {:optional true} :string]
-    [::mc/default [:map-of :string :any]]]
+    [:collection_id {:optional true} :string]
+    [::mc/default [:map-of :keyword :any]]]
    (mu/with-api-error-message
-    [:fn (fn [parts] (every? #{"file" "collection_id"} (keys parts)))]
+    [:fn (fn [parts] (every? #{:file :collection_id} (keys parts)))]
     (deferred-tru "unexpected multipart part"))])
 
 ;; TODO (Cam 2025-11-25) please add a response schema to this API endpoint, it makes it easier for our customers to
@@ -509,12 +513,10 @@
   [{:keys [id]} :- [:map
                     [:id ms/PositiveInt]]
    _query-params
-   _body
-   {:keys [multipart-params], :as _request} :- [:map
-                                                [:multipart-params CsvUploadParts]]]
+   {:keys [file]} :- CsvUploadParts]
   (update-csv! {:table-id id
-                :filename (get-in multipart-params ["file" :filename])
-                :file     (get-in multipart-params ["file" :tempfile])
+                :filename (:filename file)
+                :file     (:tempfile file)
                 :action   :metabase.upload/append}))
 
 ;; TODO (Cam 2025-11-25) please add a response schema to this API endpoint, it makes it easier for our customers to
@@ -528,12 +530,10 @@
   [{:keys [id]} :- [:map
                     [:id ms/PositiveInt]]
    _query-params
-   _body
-   {:keys [multipart-params], :as _request} :- [:map
-                                                [:multipart-params CsvUploadParts]]]
+   {:keys [file]} :- CsvUploadParts]
   (update-csv! {:table-id id
-                :filename (get-in multipart-params ["file" :filename])
-                :file     (get-in multipart-params ["file" :tempfile])
+                :filename (:filename file)
+                :file     (:tempfile file)
                 :action   :metabase.upload/replace}))
 
 (defn- sync-schema-async!

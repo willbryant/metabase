@@ -260,7 +260,15 @@
                (-> (mt/user-http-request :crowberto :post 200 "notification" {:creator_id   (mt/user->id :rasta)
                                                                               :payload      {:card_id card-id}
                                                                               :payload_type "notification/card"})
-                   :creator_id)))))))
+                   :creator_id))))
+      (testing "a handler whose template has another channel type is a 400"
+        (mt/with-temp [:model/ChannelTemplate {slack-tmpl-id :id} {:channel_type :channel/slack}]
+          (is (= "Channel type and template type mismatch"
+                 (mt/user-http-request :crowberto :post 400 "notification"
+                                       {:payload      {:card_id card-id}
+                                        :payload_type "notification/card"
+                                        :handlers     [{:channel_type "channel/email"
+                                                        :template_id  slack-tmpl-id}]}))))))))
 
 (deftest notification-with-custom-template-test
   (mt/with-model-cleanup [:model/Notification]
@@ -486,6 +494,41 @@
                                                                         :payload      {}
                                                                         :payload_type "notification/card"})))))
 
+(deftest update-notification-route-id-is-authoritative-test
+  (testing "PUT /api/notification/:id - the URL names the row being updated; body ids are ignored"
+    (notification.tu/with-card-notification
+      [notification {}]
+      (let [{notification-id    :id
+             payload-id         :payload_id
+             {card-id :card_id} :payload} notification
+            put! (fn [expected-status body]
+                   (mt/user-http-request :crowberto :put expected-status
+                                         (format "notification/%d" notification-id) body))]
+        (testing "a body that omits :id updates the row in place instead of deleting and recreating it"
+          (is (=? {:id     notification-id
+                   :active false}
+                  (put! 200 {:payload_type "notification/card"
+                             :active       false
+                             :payload      {:card_id        card-id
+                                            :send_condition "has_result"}})))
+          (testing "\nthe notification and its payload keep their primary keys"
+            (is (=? {:active     false
+                     :payload_id payload-id}
+                    (t2/select-one :model/Notification notification-id)))
+            (is (true? (t2/exists? :model/NotificationCard :id payload-id)))))
+        (testing "a body naming a different notification id is ignored - the URL row is updated in place"
+          (is (=? {:id notification-id}
+                  (put! 200 (assoc notification :id (inc notification-id)))))
+          (is (=? {:active     true
+                   :payload_id payload-id}
+                  (t2/select-one :model/Notification notification-id))))
+        (testing "a body payload naming a different payload row is ignored - the payload keeps its primary key"
+          (is (=? {:id notification-id}
+                  (put! 200 (assoc-in notification [:payload :id] (inc payload-id)))))
+          (is (true? (t2/exists? :model/NotificationCard :id payload-id))))
+        (testing "no orphan payload rows were created along the way"
+          (is (= 1 (t2/count :model/NotificationCard :card_id card-id))))))))
+
 (deftest put-creator-id-permissions-test
   (testing "PUT /api/notification/:id and creator_id"
     (notification.tu/with-card-notification
@@ -596,6 +639,30 @@
         (testing "no x-metabase-client header: result email has links"
           (is (true? (has-link? nil))))))))
 
+(deftest send-unsaved-notification-ignores-body-ids-test
+  (testing "POST /api/notification/send leaves a saved notification named by the body's id/payload_id untouched"
+    (notification.tu/with-card-notification
+      [{existing-id :id}
+       {:subscriptions [{:type          :notification-subscription/cron
+                         :cron_schedule "0 0 0 * * ?"}]}]
+      (mt/with-temp [:model/Card {card-id :id} {:dataset_query (mt/mbql-query products {:aggregation [[:count]]})}]
+        (let [existing-payload-id (t2/select-one-fn :payload_id :model/Notification :id existing-id)]
+          (notification.tu/with-channel-fixtures [:channel/email]
+            (notification.tu/with-captured-channel-send!
+              (mt/user-http-request :rasta :post 204 "notification/send"
+                                    {:id           existing-id
+                                     :payload_id   (+ existing-payload-id 999999)
+                                     :payload_type :notification/card
+                                     :payload      {:card_id        card-id
+                                                    :send_condition :has_result
+                                                    :send_once      false}
+                                     :handlers     [{:channel_type :channel/email
+                                                     :recipients   [{:type    :notification-recipient/user
+                                                                     :user_id (mt/user->id :rasta)}]}]}))
+            (is (t2/exists? :model/Notification :id existing-id))
+            (is (t2/exists? :model/NotificationCard :id existing-payload-id))
+            (is (= 1 (t2/count :model/NotificationSubscription :notification_id existing-id)))))))))
+
 (deftest get-notification-permissions-test
   (mt/with-temp
     [:model/User {third-user-id :id} {:is_superuser false}]
@@ -667,6 +734,33 @@
                        (perms/grant-application-permissions! group :subscription)
                        (create-notification! user 200)
                        (create-notification! :rasta 403)))))))))))))
+
+(deftest card-notification-permissions-without-ee-code-test
+  (testing "a token advertising :advanced-permissions doesn't lock non-admins out of alerts on a jar with no EE code"
+    ;; Must stay outside `mt/when-ee-evailable`: the OSS CI jobs are the only place this regresses, and that
+    ;; macro compiles its body out of them. The explicit `:subscription` grant keeps the expected status
+    ;; identical on both matrices.
+    (mt/with-model-cleanup [:model/Notification]
+      (binding [collection/*allow-deleting-personal-collections* true]
+        (mt/with-user-in-groups [group {:name "notification perm, no ee code"}
+                                 user  [group]]
+          (perms/grant-application-permissions! group :subscription)
+          (mt/with-temp [:model/Collection {collection-id :id} {:personal_owner_id (:id user)}
+                         :model/Card       {card-id :id}       {:collection_id collection-id}]
+            (mt/with-premium-features #{:advanced-permissions}
+              (let [notification (mt/user-http-request user :post 200 "notification"
+                                                       {:payload_type "notification/card"
+                                                        :payload      {:card_id card-id}})
+                    ;; drop creator_id: echoing it back reads as a (superuser-only) owner reassignment
+                    update!      (fn [changes]
+                                   (mt/user-http-request user :put 200 (format "notification/%d" (:id notification))
+                                                         (merge (dissoc notification :creator_id)
+                                                                {:updated_at (t/offset-date-time)}
+                                                                changes)))]
+                (testing "the creator can update it"
+                  (update! {}))
+                (testing "and archive it"
+                  (is (=? {:active false} (update! {:active false}))))))))))))
 
 (deftest update-card-notification-permissions-test
   (mt/with-model-cleanup [:model/Notification]
@@ -934,6 +1028,28 @@
               (send! :crowberto 200))
             (testing "a non-admin user cannot"
               (send! :rasta 403))))))))
+
+(deftest send-unsaved-notification-existing-channel-permissions-test
+  (testing "POST /api/notification/send naming an existing channel by channel_id requires channel write permission"
+    (mt/with-premium-features #{}
+      (mt/with-temp [:model/Card    {card-id :id} {}
+                     :model/Channel {chn-id :id}  {:type    :channel/http
+                                                   :details {:url         "https://example.com/webhook"
+                                                             :auth-method "none"}}]
+        (let [send! (fn [user-or-id channel-id expected-status]
+                      (mt/with-dynamic-fn-redefs [notification/send-notification! (fn [& _args] :done)]
+                        (mt/user-http-request user-or-id :post expected-status "notification/send"
+                                              {:payload_type  :notification/card
+                                               :handlers      [{:channel_type :channel/http
+                                                                :channel_id   channel-id}]
+                                               :subscriptions []
+                                               :payload       {:card_id card-id}})))]
+          (testing "an admin can send to an existing channel"
+            (send! :crowberto chn-id 200))
+          (testing "a non-admin user cannot"
+            (send! :rasta chn-id 403))
+          (testing "a non-admin user gets the same 403 for a channel id that doesn't exist"
+            (send! :rasta Integer/MAX_VALUE 403)))))))
 
 (deftest list-notifications-basic-test
   (testing "GET /api/notification"

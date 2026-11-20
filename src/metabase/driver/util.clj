@@ -24,12 +24,14 @@
    [metabase.util.log :as log]
    [metabase.util.malli :as mu]
    ^{:clj-kondo/ignore [:discouraged-namespace]} [metabase.util.malli.schema :as ms]
-   [metabase.util.performance :refer [mapv empty? some]])
+   [metabase.util.performance :refer [mapv empty? some]]
+   [ring.util.codec :as codec])
   (:import
    (java.io ByteArrayInputStream)
    (java.security KeyFactory KeyStore PrivateKey)
    (java.security.cert Certificate CertificateFactory X509Certificate)
    (java.security.spec PKCS8EncodedKeySpec)
+   (java.util.function BiConsumer IntUnaryOperator ObjIntConsumer Supplier)
    (javax.net SocketFactory)
    (javax.net.ssl KeyManagerFactory SSLContext TrustManagerFactory X509TrustManager)))
 
@@ -233,6 +235,63 @@
         (when (some #(not (u.http/host-allowed-for-network-policy? policy %)) hosts)
           (throw (blocked-network-address-exception)))))))
 
+(defn- fold-case
+  "`s` with each code point folded the way `String/equalsIgnoreCase` compares it: upper case, then lower case."
+  ^String [^String s]
+  (-> (.codePoints s)
+      (.map (reify IntUnaryOperator (applyAsInt [_ cp] (Character/toUpperCase cp))))
+      (.map (reify IntUnaryOperator (applyAsInt [_ cp] (Character/toLowerCase cp))))
+      (.collect (reify Supplier (get [_] (StringBuilder.)))
+                (reify ObjIntConsumer (accept [_ sb cp] (.appendCodePoint ^StringBuilder sb cp)))
+                (reify BiConsumer (accept [_ a b] (.append ^StringBuilder a ^CharSequence b))))
+      (str)))
+
+(defn- normalize-connection-parameter
+  "Normalize `s` for matching against [[driver/disallowed-connection-parameters]]: percent escapes decoded once, case
+  folded the way `equalsIgnoreCase` does, and `_ . - +` and whitespace removed."
+  [s]
+  ;; (?U) makes \s match Unicode whitespace too
+  (-> (codec/percent-decode (str s)) fold-case (str/replace #"(?U)[_.\-+\s]" "")))
+
+(defn disallowed-connection-parameter
+  "The first name in [[driver/disallowed-connection-parameters]] that the string `s` contains, after both are
+  normalized by [[normalize-connection-parameter]], or nil when it contains none."
+  [driver s]
+  (let [s (normalize-connection-parameter s)]
+    (some #(when (str/includes? s (normalize-connection-parameter %)) %)
+          (driver/disallowed-connection-parameters driver))))
+
+(def ^:private url-separators
+  "Characters that end a URL-building detail's part of a connection URL and start a client parameter."
+  [\? \& \; \#])
+
+(defn- validate-url-building-details!
+  [driver details]
+  (doseq [k     (driver/url-building-detail-keys driver)
+          :let  [v (get details k)]
+          ;; some clients percent-decode the URL once before splitting off its parameters, so an encoded separator is
+          ;; refused too
+          :when (and (some? v) (some (set url-separators) (codec/percent-decode (str v))))]
+    (throw (ex-info (str "Connection detail " (name k) " may not contain " (str/join " " url-separators))
+                    {:status-code 400, :detail k}))))
+
+(defn validate-connection-parameters!
+  "Throw a 400 if `details` set a connection parameter named in [[driver/disallowed-connection-parameters]], either in
+  `:additional-options` or as a detail key, or if a value of one of the [[driver/url-building-detail-keys]] contains a
+  URL separator. Returns nil when the details are acceptable.
+
+  Reads the details a user supplied rather than the connection spec built from them: the spec also carries properties
+  Metabase sets itself, which are not the user's to have chosen. An auth provider's response is merged into the details
+  as well (see [[driver/incorporate-auth-provider-details]]), so check the details again once it has been."
+  [driver details]
+  (letfn [(refuse! [where match]
+            (throw (ex-info (str "Potentially dangerous keys in " where) {:status-code 400, :disallowed-key match})))]
+    (when-let [match (some->> (:additional-options details) (disallowed-connection-parameter driver))]
+      (refuse! "additional options" match))
+    (when-let [match (some #(disallowed-connection-parameter driver (if (keyword? %) (name %) %)) (keys details))]
+      (refuse! "connection details" match)))
+  (validate-url-building-details! driver details))
+
 (defn can-connect-with-details?
   "Check whether we can connect to a database with `driver` and `details-map` and perform a basic query such as `SELECT
   1`. Specify optional param `throw-exceptions` if you want to handle any exceptions thrown yourself (e.g., so you
@@ -323,10 +382,20 @@
    accidental coupling between tests."
   (not (or config/is-test? config/is-dev?)))
 
+(defn- check-feature
+  "Ask `driver` whether it supports one feature, degrading to false (with a log line) if it throws. Puts no bound on
+  how long the driver may take -- callers bound it at whatever granularity suits them."
+  [driver feature database]
+  (try
+    (driver/database-supports? driver feature database)
+    (catch Throwable e
+      (log/error (u/format-color 'red "Failed to check feature '%s' for database %s: %s" (u/qualified-name feature) (:id database) (ex-message e)))
+      false)))
+
 (defn- supports?* [driver feature database]
   (try
     (u/with-timeout supports?-timeout-ms
-      (driver/database-supports? driver feature database))
+      (check-feature driver feature database))
     (catch Throwable e
       (log/error (u/format-color 'red "Failed to check feature '%s' for database %s: %s" (u/qualified-name feature) (:id database) (ex-message e)))
       false)))
@@ -376,10 +445,35 @@
   #{;; used intenrally during the sync process, does not really need to be hydrated
     :metadata/table-writable-check})
 
-(defn- features* [driver database]
+(defn- feature-set
+  "The set of features for which `supported?` returns truthy, minus the ones we never hydrate."
+  [supported?]
   (set (for [feature driver/features
-             :when (and (not (skip-internal-features feature)) (supports? driver feature database))]
+             :when (and (not (skip-internal-features feature)) (supported? feature))]
          feature)))
+
+(defn- features* [driver database]
+  (feature-set #(supports? driver % database)))
+
+(defn- features-timeout-ms
+  "Budget for one batched scan of every feature. Read per call so that rebinding [[supports?-timeout-ms]] moves it too."
+  []
+  (* 4 supports?-timeout-ms))
+
+(defn- features-batched*
+  "Like [[features*]], but bounds the whole scan with a single timeout instead of giving each of the ~90 checks its
+  own. A per-check timeout costs a thread handoff that the check itself does not, and that handoff dominates the scan.
+
+  Only used while [[*memoize-supports?*]] is off. With memoization on, [[memoized-supports?*]] already absorbs the
+  repeat cost, and going around it would change what that cache ends up holding."
+  [driver database]
+  (try
+    (u/with-timeout (features-timeout-ms)
+      (feature-set #(check-feature driver % database)))
+    (catch Throwable _
+      ;; Budget blown, so fall back to the per-feature path: it bounds each check separately and therefore yields
+      ;; exactly what this call would have yielded had it never been batched.
+      (features* driver database))))
 
 (def ^:private memoized-features*
   (memoize/memo
@@ -396,9 +490,10 @@
                 [:map
                  [:lib/type [:= :metadata/database]]]
                 (ms/InstanceOf :model/Database)]]
-  (let [database (ensure-lib-database database)
-        f (if *memoize-supports?* memoized-features* features*)]
-    (f driver database)))
+  (let [database (ensure-lib-database database)]
+    (if *memoize-supports?*
+      (memoized-features* driver database)
+      (features-batched* driver database))))
 
 (defn available-drivers
   "Return a set of all currently available drivers."

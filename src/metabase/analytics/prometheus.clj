@@ -281,6 +281,8 @@
                      {:description "Duration in milliseconds of the init!* function execution."})
    (prometheus/counter :metabase-csv-upload/failed
                        {:description "Number of failures when uploading CSV."})
+   (prometheus/counter :metabase-bug-report/legacy-reporter
+                       {:description "Number of Slack bug reports whose reporter was sent as a name/email object instead of a boolean."})
    (prometheus/counter :metabase-email/messages
                        {:description "Number of emails sent."})
    (prometheus/counter :metabase-email/message-errors
@@ -806,6 +808,10 @@
    (prometheus/counter :metabase-metaplow/errors
                        {:description "Metaplow event pipeline errors by stage."
                         :labels [:stage]})
+   ;; Not labelled by source address: the relays are anonymous and public, so the caller would pick the label value.
+   (prometheus/counter :metabase-analytics-relay/rejected
+                       {:description "Public telemetry relay requests rejected without forwarding, by relay and reason."
+                        :labels [:relay :reason]})
    (prometheus/gauge :metabase-memoize/cache-size
                      {:description "Number of entries currently held in a monitored in-memory memoization cache."
                       :labels [:cache]})])

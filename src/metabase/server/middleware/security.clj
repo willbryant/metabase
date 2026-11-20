@@ -1,6 +1,7 @@
 (ns metabase.server.middleware.security
   "Ring middleware for adding security-related headers to API responses."
   (:require
+   [clojure.core.memoize :as memoize]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [environ.core :as env]
@@ -284,7 +285,7 @@
                                  (when (analytics/anon-tracking-enabled)
                                    (setting/get-value-of-type :string :snowplow-url))
                                  (when (analytics/anon-tracking-enabled)
-                                   (setting/get-value-of-type :string :metaplow-url))
+                                   (analytics/metaplow-url))
                                  ;; Webpack dev server
                                  (when config/is-dev?
                                    (str "*:" frontend-dev-port " ws://*:" frontend-dev-port))
@@ -330,11 +331,19 @@
    (= reference-port "*")
    (= port reference-port)))
 
-(defn parse-approved-origins
-  "Parses the space separated string of approved origins"
+(defn- parse-approved-origins*
   [approved-origins-raw]
   (let [urls (str/split approved-origins-raw #" +")]
     (keep (comp parse-url strip-origin-path) urls)))
+
+;; [[parse-approved-origins]] runs on essentially every API response via [[approved-origin?]]. Cache the parse (and
+;; its `Invalid URL` logging) against the origins string, which is a slow-moving global. A small LRU bound fits the few
+;; distinct strings callers pass -- the merged SDK+MCP allowlist and the MCP-only one -- without either evicting the
+;; other.
+(def ^{:arglists '([approved-origins-raw])}
+  parse-approved-origins
+  "Parses the space separated string of approved origins. Result is LRU-cached against the string."
+  (memoize/lru parse-approved-origins* :lru/threshold 4))
 
 (def ^:private loopback-hosts
   "Set of hostnames/IPs that represent loopback addresses.
@@ -345,7 +354,7 @@
   "Returns true if the origin is a loopback address (localhost, 127.0.0.1, or ::1) on any port"
   [raw-origin]
   (when raw-origin
-    (let [origin (parse-url raw-origin)]
+    (let [origin (try-parse-url raw-origin)]
       (and origin
            (contains? loopback-hosts (u/lower-case-en (:domain origin)))))))
 
@@ -361,7 +370,7 @@
     ;; Check against approved origins list
     (when (and (seq raw-origin) (seq approved-origins-raw))
       (let [approved-list (parse-approved-origins approved-origins-raw)
-            origin        (parse-url raw-origin)]
+            origin        (try-parse-url raw-origin)]
         (when origin
           (some (fn [approved-origin]
                   (and
@@ -421,13 +430,23 @@
        (or (= (:request-method request) :options)
            (contains? #{400 402} (:status response)))))
 
+(defn- cacheable-status?
+  "Whether a response with this status may carry a far-future cache header. A 404 for a hashed
+  asset is transient: during a rolling deploy a client can ask an instance that does not have the
+  file yet. Caching that answer for a year leaves the asset unreachable long after the deploy."
+  [status]
+  (boolean (and status
+                (or (<= 200 status 299)
+                    (= status 304)))))
+
 (defn- add-security-headers* [request response]
   ;; merge is other way around so that handler can override headers
   (let [headers (security-headers
                  :origin         (get (:headers request) "origin")
                  :nonce          (:nonce request)
                  :allow-iframes? ((some-fn request/public? request/embed?) request)
-                 :allow-cache?   (request/cacheable? request))
+                 :allow-cache?   (and (request/cacheable? request)
+                                      (cacheable-status? (:status response))))
         cors-headers (when (always-allow-cors? request response)
                        {"Access-Control-Allow-Origin" "*"
                         "Access-Control-Allow-Headers" "*"

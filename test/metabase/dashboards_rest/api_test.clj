@@ -2417,14 +2417,14 @@
       (do-with-add-card-parameter-mapping-permissions-fixtures!
        (fn [{:keys [card-id mappings add-card! dashcards]}]
          (data-perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
-         (is (=? {:message "You must have data permissions to add a parameter referencing the Table \"VENUES\"."}
-                 (add-card! 403)))
+         (is (= "You must have data permissions to add a parameter referencing this Field."
+                (add-card! 403)))
          (is (= []
                 (dashcards)))
          (testing "Permissions for a different table in the same DB should not count"
            (data-perms/set-table-permission! (perms-group/all-users) (mt/id :categories) :perms/create-queries :query-builder)
-           (is (=? {:message  "You must have data permissions to add a parameter referencing the Table \"VENUES\"."}
-                   (add-card! 403)))
+           (is (= "You must have data permissions to add a parameter referencing this Field."
+                  (add-card! 403)))
            (is (= []
                   (dashcards))))
          (testing "If they have data permissions, it should be ok"
@@ -2453,7 +2453,7 @@
                                                 :target       [:dimension [:field (mt/id :venues :category_id) nil]]}]}]
             (let [resp (mt/user-http-request :rasta :post 403 (format "dashboard/save/collection/%d" coll-id)
                                              {:name "transient" :parameters [] :dashcards [dashcard]})]
-              (is (re-find #"data permissions.*VENUES" (:cause resp))))
+              (is (= "You must have data permissions to add a parameter referencing this Field." resp)))
             (testing "and once granted, the save succeeds"
               (data-perms/set-table-permission! (perms-group/all-users) (mt/id :venues) :perms/create-queries :query-builder)
               (is (some? (mt/user-http-request :rasta :post 200 (format "dashboard/save/collection/%d" coll-id)
@@ -2559,8 +2559,8 @@
       (do-with-update-cards-parameter-mapping-permissions-fixtures!
        (fn [{:keys [dashboard-id card-id original-mappings update-mappings! update-size! new-dashcard-info new-mappings]}]
          (testing "Should *NOT* be allowed to update the `:parameter_mappings` without proper data permissions"
-           (is (=? {:message  "You must have data permissions to add a parameter referencing the Table \"VENUES\"."}
-                   (update-mappings! 403)))
+           (is (= "You must have data permissions to add a parameter referencing this Field."
+                  (update-mappings! 403)))
            (is (= original-mappings
                   (t2/select-one-fn :parameter_mappings :model/DashboardCard :dashboard_id dashboard-id, :card_id card-id))))
          (testing "Changing another column should be ok even without data permissions."
@@ -2718,8 +2718,8 @@
                                                          :dashcards  [(text-dashcard field-id)]
                                                          :tabs       []}))]
               (testing "a Field the user cannot query is rejected"
-                (is (re-find #"You must have data permissions to add a parameter referencing the Table"
-                             (:cause (save! (mt/id :categories :name) 403))))
+                (is (= "You must have data permissions to add a parameter referencing this Field."
+                       (save! (mt/id :categories :name) 403)))
                 (is (empty? (t2/select :model/DashboardCard :dashboard_id dashboard-id))))
               (testing "a Field the user can query is accepted"
                 (is (some? (save! (mt/id :venues :name) 200)))))))))))
@@ -3811,6 +3811,44 @@
           (is (some? (mt/user-http-request :rasta :get 200 (chain-filter-values-url dashboard-id "abc"))))
           (is (some? (mt/user-http-request :rasta :get 200 (chain-filter-search-url dashboard-id "abc" "red")))))))))
 
+(deftest parameter-values-from-card-nested-source-card-test
+  (testing "users must have permissions to read every card the source card's query nests, not just the source card (SEC-1158)"
+    (mt/with-non-admin-groups-no-root-collection-perms
+      (mt/with-temp
+        [:model/Collection private-coll {:name "Private nested card collection"}
+         :model/Card       {nested-card-id :id} {:collection_id (:id private-coll)
+                                                 :database_id   (mt/id)
+                                                 :table_id      (mt/id :venues)
+                                                 :dataset_query (mt/mbql-query venues {:limit 5})}
+         :model/Collection wrapper-coll {:name "Readable wrapper card collection"}
+         :model/Card       {wrapper-card-id :id} {:collection_id (:id wrapper-coll)
+                                                  :database_id   (mt/id)
+                                                  :dataset_query {:database (mt/id)
+                                                                  :type     :query
+                                                                  :query    {:source-table (str "card__" nested-card-id)}}}
+         :model/Collection dash-coll {:name "Dashboard collection"}
+         :model/Dashboard  {dashboard-id :id} {:collection_id (:id dash-coll)
+                                               :parameters    [{:id                   "abc"
+                                                                :type                 "category"
+                                                                :name                 "CATEGORY"
+                                                                :values_source_type   "card"
+                                                                :values_source_config {:card_id     wrapper-card-id
+                                                                                       :value_field (mt/$ids $venues.name)}}]}]
+        (perms/grant-collection-read-permissions! (perms-group/all-users) dash-coll)
+        (perms/grant-collection-read-permissions! (perms-group/all-users) wrapper-coll)
+        (testing "read permission on the wrapper card is not enough when its query nests a card the user cannot read"
+          (is (= (format "You do not have permissions to view Card %d." nested-card-id)
+                 (mt/user-http-request :rasta :get 403 (chain-filter-values-url dashboard-id "abc"))))
+          (is (= (format "You do not have permissions to view Card %d." nested-card-id)
+                 (mt/user-http-request :rasta :get 403 (chain-filter-search-url dashboard-id "abc" "red")))))
+        ;; grant permission to read the collection containing the nested card
+        (perms/grant-collection-read-permissions! (perms-group/all-users) private-coll)
+        (testing "success once the user can read the nested card too"
+          (is (=? {:values seq}
+                  (mt/user-http-request :rasta :get 200 (chain-filter-values-url dashboard-id "abc"))))
+          (is (=? {:values seq}
+                  (mt/user-http-request :rasta :get 200 (chain-filter-search-url dashboard-id "abc" "red")))))))))
+
 (deftest parameter-values-from-card-test-4
   ;; TODO: Re-enable this test, or delete it. Now that mapping dashboard filters to fields on cards is powered by Lib,
   ;; the FE does not use the /api/table/:card__id/query_metadata API call to determine the fields which can be filtered
@@ -4464,9 +4502,8 @@
                                        dashcard-id)]
               (testing "Without actions enabled"
                 (is (= "Actions are not enabled."
-                       (:cause
-                        (mt/user-http-request :crowberto :post 400 execute-path
-                                              {:parameters {"name" "Birds"}})))))
+                       (mt/user-http-request :crowberto :post 400 execute-path
+                                             {:parameters {"name" "Birds"}}))))
               ;; Actions cannot run with access to the DB blocked, which is an enterprise feature.  See tests in
               ;; enterprise/backend/test/metabase_enterprise/advanced_permissions/common_test.clj and at the bottom of
               ;; this file
@@ -4503,9 +4540,8 @@
                                        dashcard-id)]
               (testing "Fails with actions disabled"
                 (is (= "Actions are not enabled."
-                       (:cause
-                        (mt/user-http-request :crowberto :post 400 execute-path
-                                              {:parameters {"id" 1}})))))
+                       (mt/user-http-request :crowberto :post 400 execute-path
+                                             {:parameters {"id" 1}}))))
               ;; Actions cannot run with access to the DB blocked, which is an enterprise feature.  See tests in
               ;; enterprise/backend/test/metabase_enterprise/advanced_permissions/common_test.clj and at the bottom of
               ;; this file.
@@ -6178,7 +6214,7 @@
                                                 {:dashcards [{:id -1 :card_id card-id :row 0 :col 0 :size_x 4 :size_y 4
                                                               :parameter_mappings mapping}]
                                                  :tabs      []}))]
-            (is (=? {:message #"(?i).*data permissions.*PRODUCTS.*"} (put! 403)))
+            (is (= "You must have data permissions to add a parameter referencing this Field." (put! 403)))
             (data-perms/set-table-permission! (perms-group/all-users) (mt/id :products) :perms/view-data :unrestricted)
             (data-perms/set-table-permission! (perms-group/all-users) (mt/id :products) :perms/create-queries :query-builder)
             (is (=? [{:parameter_mappings [{:parameter_id "_ID_"
@@ -6462,6 +6498,55 @@
       (mt/user-http-request :crowberto :put 200 (str "dashboard/" dashboard-id) {:archived false})
       (is (=? {:archived false :collection_id collection-id}
               (t2/select-one :model/Dashboard :id dashboard-id))))))
+
+;; Subscription setup and listing go through these helpers, so the round trip below outlives a move of Dashboard
+;; subscriptions off Pulse: swap the helpers, keep the assertions.
+(defn- create-dashboard-subscription!
+  [dashboard-id card-id dashcard-id recipient-id]
+  (mt/user-http-request :crowberto :post 200 "pulse"
+                        {:name         "Subscription"
+                         :dashboard_id dashboard-id
+                         :cards        [{:id card-id :include_csv false :include_xls false :dashboard_card_id dashcard-id}]
+                         :channels     [{:enabled       true
+                                         :channel_type  "email"
+                                         :schedule_type "daily"
+                                         :schedule_hour 12
+                                         :schedule_day  nil
+                                         :recipients    [{:id recipient-id}]}]}))
+
+(defn- dashboard-subscriptions
+  "The Dashboard's subscriptions, each as its card ids and its channels' type, schedule and recipients."
+  [dashboard-id]
+  (for [subscription (mt/user-http-request :crowberto :get 200 "pulse" :dashboard_id dashboard-id)]
+    {:cards    (map :id (:cards subscription))
+     :channels (for [channel (:channels subscription)]
+                 {:channel_type  (:channel_type channel)
+                  :schedule_type (:schedule_type channel)
+                  :schedule_hour (:schedule_hour channel)
+                  :recipients    (map :id (:recipients channel))})}))
+
+(deftest trash-and-restore-dashboard-keeps-subscriptions-test
+  (testing "trashing then restoring a Dashboard brings its subscriptions back unchanged"
+    (mt/with-fake-inbox
+      (mt/with-temp [:model/Collection    {collection-id :id} {}
+                     :model/Card          {card-id :id}       {:collection_id collection-id}
+                     :model/Dashboard     {dashboard-id :id}  {:collection_id collection-id}
+                     :model/DashboardCard {dashcard-id :id}   {:dashboard_id dashboard-id :card_id card-id}]
+        (mt/with-model-cleanup [:model/Pulse]
+          (let [recipient-id          (mt/user->id :rasta)
+                {subscription-id :id} (create-dashboard-subscription! dashboard-id card-id dashcard-id recipient-id)
+                before                (dashboard-subscriptions dashboard-id)]
+            (is (=? [{:cards [card-id] :channels [{:recipients [recipient-id]}]}]
+                    before))
+            (mt/user-http-request :crowberto :put 200 (str "dashboard/" dashboard-id) {:archived true})
+            (testing "a trashed Dashboard lists no subscriptions"
+              (is (empty? (dashboard-subscriptions dashboard-id))))
+            (mt/user-http-request :crowberto :put 200 (str "dashboard/" dashboard-id) {:archived false})
+            (is (= before (dashboard-subscriptions dashboard-id)))
+            (testing "permanently deleting the Dashboard deletes its subscriptions"
+              (mt/user-http-request :crowberto :put 200 (str "dashboard/" dashboard-id) {:archived true})
+              (mt/user-http-request :crowberto :delete 204 (str "dashboard/" dashboard-id))
+              (mt/user-http-request :crowberto :get 404 (str "pulse/" subscription-id)))))))))
 
 (deftest copy-dashboard-permission-model-test
   (testing "POST /api/dashboard/:id/copy needs only read-on-source + create-on-destination"

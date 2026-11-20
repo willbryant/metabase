@@ -12,6 +12,8 @@
    [metabase.driver.sql-jdbc.sync.describe-table :as sql-jdbc.describe-table]
    [metabase.driver.sql-jdbc.sync.interface :as sql-jdbc.sync]
    [metabase.driver.sql.query-processor :as sql.qp]
+   [metabase.driver.sync :as driver.s]
+   [metabase.driver.util :as driver.u]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
    [metabase.lib.test-util :as lib.tu]
@@ -917,3 +919,117 @@
           (try-execute! admin-spec (format "DROP SCHEMA IF EXISTS \"%s\" CASCADE" schema))
           (try-execute! admin-spec (format "DROP OWNED BY \"%s\""                  grantor))
           (try-execute! admin-spec (format "DROP USER IF EXISTS \"%s\""            grantor)))))))
+
+(deftest ^:parallel exactly-named-schemas-agrees-with-filter-test
+  (testing "when the inclusion filter names its schemas outright, membership decides exactly what the filter keeps"
+    (let [candidates ["spectrum"
+                      "2026_08_27_18_abc_schema"
+                      "2026_08_27_18_abc_schema_extra"
+                      "prefix_spectrum"
+                      "spectrumx"
+                      "SPECTRUM"
+                      "other"
+                      "with space"
+                      "withxspace"
+                      "hyphen-schema"
+                      "hyphenxschema"
+                      "unicodé"
+                      "unicode"
+                      "at@sign"
+                      "atxsign"]]
+      (doseq [patterns ["spectrum"
+                        "spectrum,2026_08_27_18_abc_schema"
+                        "  spectrum ,  2026_08_27_18_abc_schema  "
+                        "spectrum,spectrum"
+                        ;; legal Redshift schema names that carry no regex syntax
+                        "with space"
+                        "hyphen-schema"
+                        "unicodé"
+                        "at@sign"]]
+        (testing (pr-str patterns)
+          (let [named (#'redshift/exactly-named-schemas patterns)]
+            (is (some? named))
+            (doseq [candidate candidates]
+              (is (= (driver.s/include-schema? patterns nil candidate)
+                     (contains? (set named) candidate))
+                  (pr-str candidate))))))))
+  (testing "a filter that needs every schema to evaluate falls through to the unrestricted query"
+    (are [patterns] (nil? (#'redshift/exactly-named-schemas patterns))
+      nil
+      ""
+      "   "
+      "test*"
+      "*_schema"
+      "spectrum,test*"
+      "crazy\\*schema"
+      "a.c"
+      "a|b"
+      "a$b"
+      "a+b"
+      "a(b)"
+      "a[b]"
+      "a^b"
+      "a?b"
+      ;; an interior empty segment names nothing, so it cannot stand in for the filter
+      "spectrum,,other"))
+  (testing "a trailing comma leaves no empty segment behind, so it still qualifies"
+    (is (= ["spectrum"] (#'redshift/exactly-named-schemas "spectrum,")))))
+
+(deftest ^:parallel regex-metacharacters-is-complete-test
+  (testing "every character the guard admits really does compile to a regex matching only itself"
+    ;; Pins the metacharacter enumeration itself: a character missing from it would be admitted here and show up as
+    ;; a disagreement, rather than as a silently wrong `in (...)` against a real cluster.
+    (let [chars (concat (map char (range 32 127)) [\é \ü \空])
+          ;; the filter splits on commas, so a comma never reaches a segment
+          chars (remove #{\,} chars)]
+      (doseq [c chars
+              :let [segment (str "a" c "c")
+                    named   (#'redshift/exactly-named-schemas segment)]
+              :when named]
+        (testing (pr-str segment)
+          (doseq [candidate [segment "abc" "axc" "ac" "aXc" "a" "other"]]
+            (is (= (boolean (driver.s/include-schema? segment nil candidate))
+                   (contains? (set named) candidate))
+                (pr-str candidate))))))))
+
+(deftest ^:parallel get-tables-sql-test
+  (testing "named schemas are bound once per union branch"
+    (let [[sql & params] (#'redshift/get-tables-sql ["spectrum" "sess"])]
+      (is (= ["spectrum" "sess" "spectrum" "sess"] params))
+      (is (= 2 (count (re-seq #"in \(\?, \?\)" sql))))))
+  (testing "no named schemas leaves the query and its params untouched"
+    (let [[sql & params] (#'redshift/get-tables-sql nil)]
+      (is (empty? params))
+      (is (not (str/includes? sql "nspname in")))
+      (is (not (str/includes? sql "schemaname in")))))
+  (testing "per-relation privilege calls are select-list expressions, never predicates"
+    ;; As predicates the planner hoists them over the schema filter and they cost ~10s per sync. See the
+    ;; comment in `get-tables-sql`.
+    (let [[sql]           (#'redshift/get-tables-sql nil)
+          predicate-lines (filter #(re-find #"^\s*(where|and)\b" %) (str/split-lines sql))]
+      (is (str/includes? sql "as selectable"))
+      (is (not-any? #(re-find #"has_(table|any_column)_privilege" %) predicate-lines)))))
+
+(deftest describe-database-tables-drops-unselectable-test
+  (testing "the query no longer filters on privilege, so the caller must, and only a boolean true passes"
+    ;; The other half of the guard above: moving the privilege calls into the select list means an unreadable
+    ;; relation now reaches Clojure, and this is the one place that drops it.
+    (mt/with-temp [:model/Database db {:engine :redshift, :details {}}]
+      (with-redefs [sql-jdbc.execute/reducible-query
+                    (fn [_database _sql]
+                      (for [[nm selectable] [["readable" true]
+                                             ["unreadable" false]
+                                             ["missing" nil]
+                                             ["stringly" "false"]]]
+                        {:name nm, :schema "s", :type "table", :description nil, :selectable selectable}))]
+        (is (= [{:name "readable", :schema "s", :description nil}]
+               (into [] (#'redshift/describe-database-tables db))))))))
+
+(deftest ^:parallel url-building-details-reject-separators-test
+  (doseq [details [{:host "r.example.com" :port 5439 :user "u" :db "a?b"}]]
+    (testing (pr-str details)
+      (is (=? {:status-code 400}
+              (try (driver.u/validate-connection-parameters! :redshift details)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e))))))))

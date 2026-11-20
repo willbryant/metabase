@@ -233,8 +233,9 @@
               (let [compiled (qp.compile/compile-preprocessed preprocessed)
                     driver (driver.u/database->driver database)]
                 ;; Return only the compiled query and its params, not the internal keys the compiler carries
-                ;; through (e.g. :lib/type, :query-permissions/referenced-card-ids).
-                (-> (select-keys compiled [:query :params])
+                ;; through (e.g. :lib/type, :query-permissions/referenced-card-ids). `:collection` is kept so
+                ;; the frontend can pre-select the source table when converting a MongoDB question to native.
+                (-> (select-keys compiled [:query :params :collection])
                     (cond-> pretty (update :query #(driver/prettify-native-form driver %))))))))))))
 
 (api.macros/defendpoint :post "/pivot"
@@ -250,8 +251,7 @@
       (qp.pivot/run-pivot-query (assoc (update query :middleware select-keys [:js-int-to-string? :ignore-cached-results?])
                                        :constraints (qp.constraints/default-query-constraints)
                                        :info        info)
-                                rff)
-      query)))
+                                rff))))
 
 (defn- parameter-field-values
   [field-ids query]

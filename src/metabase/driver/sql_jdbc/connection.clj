@@ -24,7 +24,8 @@
    [toucan2.core :as t2])
   (:import
    (com.google.common.cache Cache CacheBuilder RemovalNotification)
-   (com.mchange.v2.c3p0 DataSources)
+   (com.mchange.v2.c3p0 C3P0ProxyConnection DataSources PooledDataSource)
+   (java.sql Connection SQLException)
    (java.util.concurrent TimeUnit)
    (javax.sql DataSource)
    (org.apache.logging.log4j Level)))
@@ -177,7 +178,16 @@
    ;; request. IRL the Metabase server and data warehouse are likely to be located in closer geographical proximity to
    ;; one another than my trans-contintental tests. Thus in the majority of cases the overhead should be next to
    ;; nothing, and in the worst case close to imperceptible.
-   "testConnectionOnCheckout"             true
+   ;;
+   ;; Tests are the exception: CI drives remote warehouses over a slow link, and on Snowflake `isValid()` is a
+   ;; heartbeat REST call, which makes the per-checkout test one of the largest single costs in the driver test
+   ;; suite. There, verify on c3p0's background thread instead -- the same pairing the app DB pool
+   ;; uses (see [[metabase.app-db.connection-pool-setup]]) -- so a stale connection is still culled without putting
+   ;; a round trip in front of every query.
+   "testConnectionOnCheckout"             (not driver-api/is-test?)
+   ;; Seconds between background tests of idle, checked-in connections. Zero disables it, which is what we want
+   ;; whenever `testConnectionOnCheckout` is already covering every connection handed out.
+   "idleConnectionTestPeriod"             (if driver-api/is-test? 60 0)
    ;; [From dox] Number of seconds that Connections in excess of minPoolSize should be permitted to remain idle in the
    ;; pool before being culled. Intended for applications that wish to aggressively minimize the number of open
    ;; Connections, shrinking the pool back towards minPoolSize if, following a spike, the load level diminishes and
@@ -255,6 +265,8 @@
         ;; went through a connection test (serialization import, config files).
         _                   (driver.u/with-database-network-policy database
                               (driver.u/validate-connection-hosts! driver details))
+        ;; likewise for parameters that were disallowed after the database was saved
+        _                   (driver.u/validate-connection-parameters! driver details)
         details-with-tunnel (driver/incorporate-ssh-tunnel-details ;; If the tunnel is disabled this returned unchanged
                              driver
                              (update details :port #(or % (default-ssh-tunnel-target-port driver))))
@@ -262,6 +274,8 @@
                              driver
                              id
                              details-with-tunnel)
+        ;; the auth provider's response is merged into the details, so it can set parameters too
+        _                   (driver.u/validate-connection-parameters! driver details-with-auth)
         spec                (connection-details->spec driver details-with-auth)
         properties          (data-warehouse-connection-pool-properties driver database)]
     (merge
@@ -375,6 +389,32 @@
     ;; Clear all swapped pools for this DB (removal listener will call destroy-pool!)
     (doseq [cache-key swapped-keys]
       (.invalidate ^Cache swapped-connection-pools cache-key))))
+
+(defn- empty-pool?
+  [data-source]
+  (and (instance? PooledDataSource data-source)
+       (try
+         (zero? (.getNumConnectionsDefaultUser ^PooledDataSource data-source))
+         (catch SQLException _
+           false))))
+
+(defn invalidate-empty-pool!
+  "Closes the cached pool for a given `data-source` if it has no connections. This should be called
+   after a checkout from a pool fails, otherwise c3p0 will make repeated requests which can lock
+   out certain DBs (#84206). We don't use [[pool-cache-key]] here to avoid looking up the database
+   object from the app DB, which could fail or have a race condition across multiple pods."
+  [data-source]
+  (when (empty-pool? data-source)
+    (doseq [[cache-key pool-spec] @pool-cache-key->connection-pool
+            :when (identical? (:datasource pool-spec) data-source)
+            :let [db-id (first cache-key)]]
+      (log/warnf "Could not acquire a connection for database %d; closing its empty connection pool" db-id)
+      ;; do not remove a newer pool that another thread put in the cache
+      (swap! pool-cache-key->connection-pool
+             #(cond-> %
+                (identical? (get % cache-key) pool-spec) (dissoc cache-key)))
+      (destroy-pool! db-id pool-spec)
+      (swap! pool-cache-key->jdbc-spec-hash dissoc cache-key))))
 
 (defn- log-ssh-tunnel-reconnect-msg! [db-id]
   (log/warn (u/format-color :red "ssh tunnel for database %s looks closed; marking pool invalid to reopen it" db-id))
@@ -581,6 +621,7 @@
 (defn do-with-connection-spec-for-testing-connection
   "Impl for [[with-connection-spec-for-testing-connection]]."
   [driver details f]
+  (driver.u/validate-connection-parameters! driver details)
   (let [details (-> details
                     (update :port #(or % (default-ssh-tunnel-target-port driver)))
                     (ssh/resolve-known-hosts driver))]
@@ -588,7 +629,9 @@
       (let [details-with-auth (driver.u/fetch-and-incorporate-auth-provider-details
                                driver
                                details-with-tunnel)
-            spec (connection-details->spec driver details-with-auth)]
+            ;; the auth provider's response is merged into the details, so it can set parameters too
+            _                 (driver.u/validate-connection-parameters! driver details-with-auth)
+            spec              (connection-details->spec driver details-with-auth)]
         (f spec)))))
 
 (defmacro with-connection-spec-for-testing-connection
@@ -625,3 +668,36 @@
 
 (defmethod driver/connection-spec :sql-jdbc [_driver db]
   (db->pooled-connection-spec  db))
+
+(def ^:private raw-connection-close-method
+  ;; c3p0 exposes the pooled physical Connection only through `rawConnectionOperation`, which names the operation as a
+  ;; `java.lang.reflect.Method`. `unwrap` is not an alternative: c3p0 delegates it to the driver, and Hive's throws.
+  (.getMethod Connection "close" (make-array Class 0)))
+
+(defn discard-pooled-connection!
+  "Destroy the physical Connection behind a c3p0 proxy, so the pool acquires a fresh one rather than handing this one
+  to the next query. Use for a Connection left in a state the pool cannot reset, such as after canceling a Statement
+  on a driver where that leaves unread protocol state on the wire.
+
+  Only the caller that owns `conn` may call this: the pool has no way to tell the difference between a Connection
+  whose borrower is finished with it and one that is still in use.
+
+  A Connection with no pool behind it has no next query to poison, so it is left alone."
+  [^Connection conn]
+  (when (instance? C3P0ProxyConnection conn)
+    (try
+      (.rawConnectionOperation ^C3P0ProxyConnection conn
+                               raw-connection-close-method
+                               C3P0ProxyConnection/RAW_CONNECTION
+                               (make-array Object 0))
+      (catch Throwable e
+        (log/debugf "Closing the raw connection to discard it failed: %s" (ex-message e))))
+    ;; Closing the raw Connection is invisible to c3p0: `rawConnectionOperation` reports nothing back to the pool, and
+    ;; the check-in reset only reads properties that a driver may answer from memory once closed — Hive's
+    ;; `getAutoCommit` is a bare `return true` — so on those drivers the pool would hand the dead Connection to the
+    ;; next query. Any *proxied* call routes its exception into c3p0, which then tests the physical Connection and
+    ;; destroys it when the test fails. `createStatement` is that call: JDBC requires it to throw on a closed
+    ;; Connection.
+    (try
+      (.close (.createStatement conn))
+      (catch Throwable _))))

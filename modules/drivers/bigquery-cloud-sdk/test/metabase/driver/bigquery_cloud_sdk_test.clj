@@ -36,7 +36,7 @@
    [metabase.warehouse-schema.models.field-values :as field-values]
    [toucan2.core :as t2])
   (:import
-   (com.google.cloud.bigquery BigQuery BigQueryException Field FieldValue FieldValue$Attribute FieldValueList TableResult)
+   (com.google.cloud.bigquery BigQuery BigQueryException Field FieldValue FieldValue$Attribute FieldValueList JobId LegacySQLTypeName Schema TableResult)
    (com.google.cloud.http HttpTransportOptions)))
 
 (set! *warn-on-reflection* true)
@@ -278,6 +278,72 @@
       (is (= 3 (next-size 1000000000 8 light))))
     (testing "no further page is fetched once the page token is blank"
       (is (nil? ((#'bigquery/adaptive-sample-next-page :table 100) (mock-page "" light)))))))
+
+(defn- mock-query-page
+  "Like [[mock-page]], but for the query-execution path: also exposes the schema and job-id that
+  `bigquery-execute-response` reads off the first page."
+  ^TableResult [token schema rows]
+  (proxy [TableResult] []
+    (getNextPageToken [] token)
+    (getValues [] rows)
+    (getSchema [] schema)
+    (getJobId [] (JobId/of "test-project" "test-job"))))
+
+(deftest ^:synchronized adaptive-query-paging-request-count-test
+  (testing "10,000 rows × 250 cols: pages stay large and round trips stay few (#79273)"
+    (let [n-rows    10000
+          wide-row  (field-value-list (repeat 250 (prim-cell "0123456789")))
+          schema    (Schema/of (u/varargs Field (for [i (range 250)]
+                                                  (Field/of (str "c" i) LegacySQLTypeName/STRING no-fields))))
+          ;; token is non-blank iff rows remain after this page
+          page      (fn [remaining-after rows]
+                      (mock-query-page (if (pos? remaining-after) "tok" "") schema rows))
+          remaining (atom (- n-rows @#'bigquery/initial-page-rows))
+          sizes     (atom [])
+          requests  (atom 0)
+          orig-next-page-size @#'bigquery/next-page-size]
+      (with-redefs [bigquery/next-page-size    (fn ^long [^long budget ^long bytes ^long rows ^long rem]
+                                                 (let [n (long (orig-next-page-size budget bytes rows rem))]
+                                                   (swap! sizes conj n)
+                                                   n))
+                    bigquery/query-results-page (fn [_job _opts]
+                                                  (swap! requests inc)
+                                                  (let [k    (min (long (peek @sizes)) @remaining)
+                                                        rem  (swap! remaining - k)]
+                                                    (page rem (vec (repeat k wide-row)))))]
+        (let [{:keys [rows]}  (#'bigquery/bigquery-execute-response
+                               (page (- n-rows 10) (vec (repeat 10 wide-row)))
+                               nil nil
+                               (fn [cols reducible] {:cols cols, :rows (into [] reducible)})
+                               nil)
+              expected-size   (quot (long @#'bigquery/*query-page-byte-budget*)
+                                    (#'bigquery/row-bytes wide-row))
+              expected-reqs   (long (Math/ceil (/ (- n-rows 10) (double expected-size))))]
+          (is (= n-rows (count rows)))
+          (is (every? #(= expected-size %) @sizes))
+          (is (= expected-reqs @requests))
+          (is (>= expected-size 1000)))))))
+
+(deftest ^:synchronized later-page-fetch-failure-test
+  (let [row        (field-value-list [(prim-cell "x")])
+        schema     (Schema/of (u/varargs Field [(Field/of "c0" LegacySQLTypeName/STRING no-fields)]))
+        ;; A non-blank token promises another page, so `adaptive-query-next-page` has to fetch one.
+        first-page (mock-query-page "tok" schema [row])
+        consume    #(#'bigquery/bigquery-execute-response
+                     first-page nil nil
+                     (fn [_cols reducible] (into [] reducible))
+                     nil)]
+    (testing "a later page that comes back nil is reported, not silently truncated (#47339)"
+      (with-redefs [bigquery/query-results-page (fn [_job _opts] nil)]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                              #"Cannot get next page from BigQuery"
+                              (consume)))))
+    (testing "a later page that throws surfaces the original error"
+      (with-redefs [bigquery/query-results-page (fn [_job _opts]
+                                                  (throw (ex-info "onoes BigQuery failed to fetch a later page" {})))]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                              #"onoes BigQuery failed to fetch a later page"
+                              (consume)))))))
 
 ;; These look like the macros from metabase.query-processor.expressions-test
 ;; but conform to bigquery naming rules
@@ -1265,43 +1331,18 @@
             (is (< count-after (+ count-before 5))
                 "unbounded thread growth!")))))))
 
-(deftest later-page-fetch-returns-nil-test
-  (mt/test-driver :bigquery-cloud-sdk
-    (testing "BigQuery query whose later page fetch returns nil is caught, not silently truncated"
-      ;; The query path pages via `query-results-page` (`.getQueryResults`), so simulate BigQuery returning nil
-      ;; for a later page even though the page token reported there was more.
-      (let [page-counter (atom 3)
-            orig-fetch   (mt/original-fn #'bigquery/query-results-page)]
-        (mt/with-dynamic-fn-redefs [bigquery/query-results-page (fn [job options]
-                                                                  (if (zero? @page-counter)
-                                                                    nil
-                                                                    (orig-fetch job options)))]
-          (binding [bigquery/*page-size*     10 ; small pages so there are several
-                    bigquery/*page-callback* (fn []
-                                               (let [pages (swap! page-counter #(max (dec %) 0))]
-                                                 (log/debugf "*page-callback counting down: %d to go" pages)))]
-            (mt/dataset test-data
-              (is (thrown-with-msg?
-                   clojure.lang.ExceptionInfo
-                   #"Cannot get next page from BigQuery"
-                   (mt/process-query (mt/query orders)))))))))))
-
 (deftest later-page-fetch-throws-test
   (mt/test-driver :bigquery-cloud-sdk
-    (testing "BigQuery query whose later page fetch throws is caught, with no thread leaks"
-      (let [count-before (count (future-thread-names))
-            page-counter (atom 3)
-            orig-fetch   (mt/original-fn #'bigquery/query-results-page)]
-        (mt/with-dynamic-fn-redefs [bigquery/query-results-page (fn [job options]
-                                                                  (if (zero? @page-counter)
-                                                                    (throw (ex-info "onoes BigQuery failed to fetch a later page" {}))
-                                                                    (orig-fetch job options)))]
+    ;; That the error surfaces at all is [[later-page-fetch-failure-test]]'s job, on mock pages. This one runs a real
+    ;; query for what that harness cannot see: the threads `execute-bigquery` starts around the fetch.
+    (testing "BigQuery query whose later page fetch throws leaks no threads"
+      (let [count-before (count (future-thread-names))]
+        ;; `query-results-page` serves only pages *after* the first -- `execute-bigquery` fetches the initial page
+        ;; from `.getQueryResults` itself -- so its first call is already a later page.
+        (mt/with-dynamic-fn-redefs [bigquery/query-results-page (fn [_job _options]
+                                                                  (throw (ex-info "onoes BigQuery failed to fetch a later page" {})))]
           (dotimes [_ 10]
-            (reset! page-counter 3)
-            (binding [bigquery/*page-size*     100 ; small pages so there are several
-                      bigquery/*page-callback* (fn []
-                                                 (let [pages (swap! page-counter #(max (dec %) 0))]
-                                                   (log/debugf "*page-callback counting down: %d to go" pages)))]
+            (binding [bigquery/*page-size* 100] ; small first page so there is a second one
               (mt/dataset test-data
                 (is (thrown-with-msg? Exception #"onoes BigQuery failed to fetch a later page"
                                       (mt/process-query (mt/query orders))))))))

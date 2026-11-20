@@ -32,8 +32,10 @@
   com.clojure-goes-fast/jvm-hiccup-meter    {:mvn/version "0.1.1"}              ; Monitor GC pauses and other system-induced pauses.
   com.draines/postal                        {:mvn/version "2.0.5"               ; SMTP library
                                              :exclusions [com.sun.mail/jakarta.mail]}
-  com.fasterxml.jackson.core/jackson-core       {:mvn/version "2.21.5"}             ; pinned: cheshire pulls 2.21.1 which has resource exhaustion vuln
-  com.fasterxml.jackson.core/jackson-databind   {:mvn/version "2.21.5"}             ; pinned: snowplow pulls 2.13.3 which has DoS vulns
+  com.fasterxml.jackson.core/jackson-core       {:mvn/version "2.21.8"}             ; pinned: cheshire pulls 2.21.1 which has resource exhaustion vuln
+  com.fasterxml.jackson.core/jackson-databind   {:mvn/version "2.21.8"}             ; pinned: snowplow pulls 2.13.3 which has DoS vulns
+  com.fasterxml.jackson.dataformat/jackson-dataformat-cbor  {:mvn/version "2.21.8"} ; pinned: cheshire pulls 2.21.1
+  com.fasterxml.jackson.dataformat/jackson-dataformat-smile {:mvn/version "2.21.8"} ; pinned: cheshire pulls 2.21.1
   com.fasterxml.woodstox/woodstox-core      {:mvn/version "7.1.1"}              ; trans dep of commons-codec
                                                                                 ; Detect the charset in uploaded CSV files
   com.github.albfernandez/juniversalchardet {:mvn/version "2.5.0"}
@@ -48,7 +50,7 @@
   com.github.vertical-blank/sql-formatter   {:mvn/version "2.0.5"}              ; Java SQL formatting library https://github.com/vertical-blank/sql-formatter
   com.google.auth/google-auth-library-credentials {:mvn/version "1.40.0"}       ; dep for BigQuery, Databricks, and Snowflake. Require here rather than letting different dep versions stomp on each other — see #70908
   com.google.code.gson/gson                 {:mvn/version "2.12.1"}             ; dep for BigQuery, Databricks, and Snowflake. Pin here so driver plugin JARs all use the same version — see #73736
-  com.google.guava/guava                    {:mvn/version "33.5.0-jre"}         ; dep for BigQuery, Spark, and GA. Require here rather than letting different dep versions stomp on each other — see comments on #9697
+  com.google.guava/guava                    {:mvn/version "33.7.2-jre"}         ; dep for BigQuery, Spark, and GA. Require here rather than letting different dep versions stomp on each other — see comments on #9697
   com.h2database/h2                         ^:antq/exclude                      ; https://metaboat.slack.com/archives/CKZEMT1MJ/p1727191010259979
   {:mvn/version "2.1.214"}            ; embedded SQL database
   com.ibm.icu/icu4j                         {:mvn/version "78.1"}               ; Used to transliterate Unicode characters into Latin characters
@@ -85,14 +87,30 @@
                                              :git/sha "ffc4edc482c057cd9412c62f018a41e9140c618b"
                                              :git/url "https://github.com/eerohele/pp"}
   io.github.metabase/macaw                  {:mvn/version "0.2.36"}             ; Parse native SQL queries
-  io.opentelemetry/opentelemetry-api        {:mvn/version "1.62.0"}             ; pinned: clj-otel-api 0.2.10 pulls 1.54.1 (W3CBaggagePropagator DoS vuln)
+  ;; OpenTelemetry: every artifact pinned to ONE version. clj-otel 0.2.10 pulls 1.54.1, while drivers pull
+  ;; newer SDKs (Snowflake via google-cloud-storage), and a mixed SDK/exporter set fails with
+  ;; NoClassDefFoundError when tracing starts. Bump these together; see metabase.tracing.otlp-export-test.
+  io.opentelemetry/opentelemetry-api        {:mvn/version "1.62.0"}             ; also fixes W3CBaggagePropagator DoS vuln in 1.54.1
+  io.opentelemetry/opentelemetry-api-incubator {:mvn/version "1.62.0-alpha"}
+  io.opentelemetry/opentelemetry-common     {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-context    {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-exporter-common {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-exporter-otlp {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-exporter-otlp-common {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-exporter-sender-okhttp {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk        {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk-common {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk-extension-autoconfigure-spi {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk-logs   {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk-metrics {:mvn/version "1.62.0"}
+  io.opentelemetry/opentelemetry-sdk-trace  {:mvn/version "1.62.0"}
   io.prometheus/simpleclient_hotspot        {:mvn/version "0.16.0"}             ; prometheus jvm collector
   junegunn/grouper                          {:mvn/version "0.1.1"}              ; Batch processing helper
   kixi/stats                                {:mvn/version "0.5.9"               ; Various statistic measures implemented as transducers
                                              :exclusions  [org.clojure/data.avl]}
   medley/medley                             {:mvn/version "1.4.0"}              ; lightweight lib of useful functions
   metabase/connection-pool                  {:mvn/version "1.2.0"}              ; simple wrapper around C3P0. JDBC connection pools
-  metabase/saml20-clj                       {:mvn/version "4.2.1"
+  metabase/saml20-clj                       {:mvn/version "4.3.0"
                                              :exclusions [; EE SAML integration TODO: bump version when we release the library
                                                           org.bouncycastle/bcpkix-jdk15on
                                                           org.bouncycastle/bcprov-jdk15on
@@ -114,7 +132,7 @@
   org.apache.commons/commons-lang3              {:mvn/version "3.20.0"}             ; helper methods for working with java.lang stuff
   org.apache.datasketches/datasketches-java     ^:antq/exclude                      ; Sketching algorithms (used for fingerprinting)
   {:mvn/version "7.0.1"}              ; version is fixed to ensure JDK21 compatibility.
-  org.apache.httpcomponents.client5/httpclient5 {:mvn/version "5.6.2"}              ; pinned: must pair with httpcore5 5.4.x (upstream pairing); ClickHouse JDBC needs httpcore5 5.3.4+
+  org.apache.httpcomponents.client5/httpclient5 {:mvn/version "5.6.4"}              ; pinned: must pair with httpcore5 5.4.x (upstream pairing); ClickHouse JDBC needs httpcore5 5.3.4+
   org.apache.httpcomponents.core5/httpcore5     {:mvn/version "5.4.3"}              ; pinned: 5.4.2+
   org.apache.httpcomponents.core5/httpcore5-h2  {:mvn/version "5.4.3"}              ; pinned: must match httpcore5 version
   org.apache.logging.log4j/log4j-1.2-api        {:mvn/version "2.26.1"}             ; apache logging framework
@@ -132,13 +150,13 @@
                                              :exclusions  [org.bouncycastle/bcpkix-jdk15on
                                                            org.bouncycastle/bcprov-jdk15on]}
   org.apache.poi/poi-ooxml-full             {:mvn/version "5.5.1"}
-  org.apache.sshd/sshd-core                 {:mvn/version "2.16.0"              ; ssh tunneling and test server
+  org.apache.sshd/sshd-core                 {:mvn/version "2.20.1"              ; ssh tunneling and test server
                                              :exclusions  [org.slf4j/slf4j-api
                                                            org.slf4j/jcl-over-slf4j]}
-  org.apache.tika/tika-core                 {:mvn/version "3.2.3"}
+  org.apache.tika/tika-core                 {:mvn/version "3.3.3"}
   org.apache.xmlgraphics/batik-all          {:mvn/version "1.19"}               ; SVG -> image
-  org.bouncycastle/bcpkix-jdk18on           {:mvn/version "1.84"}               ; Bouncy Castle crypto library -- explicit version of BC specified to resolve illegal reflective access errors
-  org.bouncycastle/bcprov-jdk18on           {:mvn/version "1.84"}
+  org.bouncycastle/bcpkix-jdk18on           {:mvn/version "1.86"}               ; Bouncy Castle crypto library -- explicit version of BC specified to resolve illegal reflective access errors
+  org.bouncycastle/bcprov-jdk18on           {:mvn/version "1.86"}
   org.clj-commons/claypoole                 {:mvn/version "1.2.2"}              ; Threadpool tools for Clojure
   org.clj-commons/dirigiste                 {:mvn/version "1.0.4"}              ; Instrumented object pooling
   org.clj-commons/hickory                   {:mvn/version "0.7.7"               ; Parse HTML into Clojure data structures
@@ -161,23 +179,24 @@
   org.clojure/tools.namespace               {:mvn/version "1.5.0"}
   org.clojure/tools.reader                  {:mvn/version "1.5.2"}
   org.clojure/tools.trace                   {:mvn/version "0.8.0"}              ; function tracing
-  org.eclipse.jetty/jetty-server            {:mvn/version "12.1.11"}
-  org.eclipse.jetty/jetty-unixdomain-server {:mvn/version "12.1.11"}
-  org.eclipse.jetty.ee9/jetty-ee9-servlet   {:mvn/version "12.1.11"}
-  org.eclipse.jetty.ee9.websocket/jetty-ee9-websocket-jetty-server {:mvn/version "12.1.11"}
+  org.eclipse.jetty/jetty-server            {:mvn/version "12.1.13"}
+  org.eclipse.jetty/jetty-unixdomain-server {:mvn/version "12.1.13"}
+  org.eclipse.jetty.ee9/jetty-ee9-servlet   {:mvn/version "12.1.13"}
+  org.eclipse.jetty.ee9.websocket/jetty-ee9-websocket-jetty-server {:mvn/version "12.1.13"}
   org.eclipse.jgit/org.eclipse.jgit        {:mvn/version "7.3.0.202506031305-r"}; Java implementation of Git version control system
   org.flatland/ordered                      {:mvn/version "1.15.12"}            ; ordered maps & sets
   org.graalvm.polyglot/js-community         {:mvn/version "25.0.1" :extension "pom"} ; JavaScript engine
   org.graalvm.polyglot/polyglot             {:mvn/version "25.0.1"}             ; GraalVM platform, required by JS engine
   org.graalvm.polyglot/python               {:mvn/version "25.0.1"
                                              :extension "pom"}
-  org.jsoup/jsoup                           {:mvn/version "1.21.2"}             ; required by hickory
+  org.jsoup/jsoup                           {:mvn/version "1.23.2"}             ; required by hickory
   org.liquibase/liquibase-core              {:mvn/version "4.33.0"              ; migration management (Java lib)
                                              :exclusions  [ch.qos.logback/logback-classic]}
   org.mariadb.jdbc/mariadb-java-client      ^:antq/exclude                      ; 3.x only support jdbc:mariadb, so using 2.x for now
-  {:mvn/version "2.7.10"}             ; MySQL/MariaDB driver
+  {:mvn/version "2.7.15"}             ; MySQL/MariaDB driver
   org.mindrot/jbcrypt                       {:mvn/version "0.4"}                ; Crypto library
-  org.postgresql/postgresql                 {:mvn/version "42.7.12"}            ; Postgres driver
+  org.ow2.asm/asm                           {:mvn/version "9.11.1"}
+  org.postgresql/postgresql                 {:mvn/version "42.7.14"}            ; Postgres driver
   org.semver4j/semver4j                     {:mvn/version "6.0.0"}              ; Semantic versioning parsing & comparison
   org.slf4j/slf4j-api                       {:mvn/version "2.0.17"}             ; abstraction for logging frameworks -- allows end user to plug in desired logging framework at deployment time
   org.tcrawley/dynapath                     {:mvn/version "1.1.0"}              ; Dynamically add Jars (e.g. Oracle or Vertica) to classpath
@@ -263,12 +282,13 @@
     {:mvn/version "0.4.0"}                     ; Enables easy memory measurement
     com.gfredericks/test.chuck   {:mvn/version "0.2.15"}                    ; generating strings from regexes (useful with malli)
     com.github.erosb/json-sKema  {:mvn/version "0.25.0"}                    ; validating MBQL JSON Schema
+    com.google.jimfs/jimfs       {:mvn/version "1.3.2"}                     ; in-memory NIO filesystems (e.g. Windows) for testing path handling
     criterium/criterium          {:mvn/version "0.4.6"}                     ; benchmarking library
     djblue/portal                {:mvn/version "0.62.0"}                    ; ui for inspecting values
     integrant/integrant          {:mvn/version "1.0.1"}                   ; component lifecycle management
     io.github.camsaul/humane-are {:mvn/version "1.0.2"}                     ; cleaner test output
     io.github.metabase/hawk      {:mvn/version "1.0.18"}                    ; test runner
-    io.opentelemetry/opentelemetry-sdk-testing {:mvn/version "1.54.1"}      ; InMemorySpanExporter for tracing tests; matches sdk impl (clj-otel-sdk 0.2.10 → 1.54.1); api is separately pinned to 1.62.0
+    io.opentelemetry/opentelemetry-sdk-testing {:mvn/version "1.62.0"}      ; InMemorySpanExporter for tracing tests; keep in sync with the OpenTelemetry pins in :deps
     io.zonky.test/embedded-postgres {:mvn/version "2.2.2"}                  ; In-process postgres for dev and testing
     ;; Native postgres binaries for every OS/arch we're likely to run on in
     ;; dev or CI. Without these Zonky falls back to x86_64 under Rosetta on
@@ -400,6 +420,9 @@
                ;; We use Snowplow micro in e2e tests
                "-Dmb.snowplow.available=true"
                "-Dmb.snowplow.url=http://localhost:9090"
+               ;; ...and the recording sink in `metaplow/` for Metabase Track. `metaplow-url`'s production
+               ;; default is nil outside production run mode, so e2e has to name the collector itself.
+               "-Dmb.metaplow.url=http://localhost:9091/api/send"
                ;; See: https://github.com/metabase/metabase/pull/38280
                "-Dmb.last.analytics.checksum=-1"
                "-Dmb.experimental.search.block.on.queue=true"
@@ -643,6 +666,7 @@
                                  :implicit-dependencies
                                  ;; too many false positives for now
                                  :unused-ret-vals
+                                 :unused-ret-vals-in-try
                                  ;; hard to clear on for metabase.util.match macros, and disabling the linter just
                                  ;; there doesn't seem to work
                                  :unused-meta-on-macro
@@ -918,13 +942,14 @@
    :extra-paths ["dev/src"]
    :main-opts   ["-m" "dev.liquibase"]}
 
-  ;; Migrate CLI:
-  ;;    clojure -M:migrate <command>
+  ;; Migrate CLI (combine with :dev -- dev/src/user.clj needs the :dev classpath):
+  ;;    clojure -M:dev:migrate <command>
   ;; E.g.
-  ;;    clojure -M:migrate up                       ;; migrate up to the latest
-  ;;    clojure -M:migrate rollback count 2         ;; rollback 2 migrations
-  ;;    clojure -M:migrate rollback id "v40.00.001" ;; rollback to a specific migration with id
-  ;;    clojure -M:migrate status                   ;; print the latest migration id
+  ;;    clojure -M:dev:migrate up                          ;; migrate up to the latest
+  ;;    clojure -M:dev:migrate rollback last-deployment    ;; roll back the last migrate run
+  ;;    clojure -M:dev:migrate rollback deployment <id>    ;; roll back everything after that deployment_id
+  ;;    clojure -M:dev:migrate rollback count 2            ;; raw Liquibase rollback of 2 changesets
+  ;;    clojure -M:dev:migrate status                      ;; print the latest migration id
   :migrate
   {:extra-deps {io.github.camsaul/humane-are {:mvn/version "1.0.2"}}
    :extra-paths ["dev/src"]

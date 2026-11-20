@@ -54,6 +54,22 @@
         (is (= "frame-ancestors 'none'"
                (csp-directive "frame-ancestors")))))))
 
+(deftest csp-header-analytics-collectors-test
+  (testing "the analytics collectors are in connect-src so the browser legs can post to them"
+    (mt/with-temporary-setting-values [anon-tracking-enabled true
+                                       metaplow-url          "https://product-analytics-ingestion.metabase.com/api/send"
+                                       snowplow-url          "https://sp.metabase.com"]
+      (let [connect-src (csp-directive "connect-src")]
+        (is (str/includes? connect-src "https://product-analytics-ingestion.metabase.com/api/send"))
+        (is (str/includes? connect-src "https://sp.metabase.com")))))
+  (testing "and neither is listed when anonymous tracking is off"
+    (mt/with-temporary-setting-values [anon-tracking-enabled false
+                                       metaplow-url          "https://product-analytics-ingestion.metabase.com/api/send"
+                                       snowplow-url          "https://sp.metabase.com"]
+      (let [connect-src (csp-directive "connect-src")]
+        (is (not (str/includes? connect-src "product-analytics-ingestion.metabase.com")))
+        (is (not (str/includes? connect-src "sp.metabase.com")))))))
+
 (deftest csp-header-iframe-hosts-tests
   (testing "Allowed iframe hosts setting is used in the CSP frame-src directive."
     (mt/with-temporary-setting-values [allowed-iframe-hosts "https://www.wikipedia.org, https://www.typescriptlang.org/   https://clojure.org"]
@@ -232,6 +248,15 @@
     (is (mw.security/approved-origin? "http://example.com:8080" "example.com:*")))
   (testing "Should handle invalid origins"
     (is (mw.security/approved-origin? "http://example.com" "  fpt://something ://123 4 http://example.com"))))
+
+(deftest approved-origin-does-not-log-on-malformed-origin-test
+  (testing "an unparsable client Origin is handled silently, not logged at ERROR"
+    ;; the CORS check runs on every request's raw Origin header, so a malformed value must not reach
+    ;; the logging parse-url variant and fill the operator's error log
+    (mt/with-log-messages-for-level [messages [metabase.server.middleware.security :error]]
+      (doseq [bad ["https://foo_bar.com" "not a url" "" "https://has/a/path"]]
+        (mw.security/approved-origin? bad "http://example.com"))
+      (is (empty? (messages))))))
 
 (deftest test-disable-cors-on-localhost-approved-origin
   (testing "Should approve loopback origins when disable-cors-on-localhost is false"
@@ -666,3 +691,28 @@
       (is (true? (server.settings/csp-img-enabled)))
       (server.settings/csp-img-enabled! false)
       (is (false? (server.settings/csp-img-enabled))))))
+
+(defn- cache-control-for
+  "Run `response` through [[mw.security/add-security-headers]] for a GET of `uri`."
+  [uri response]
+  (let [handler (mw.security/add-security-headers (fn [_req respond _raise] (respond response)))
+        result  (promise)]
+    (handler {:request-method :get :uri uri} #(deliver result %) #(deliver result %))
+    (get-in @result [:headers "Cache-Control"])))
+
+(deftest far-future-cache-only-for-successful-responses-test
+  (testing "a hashed asset that exists is cached for a long time"
+    (is (= "public, max-age=31536000"
+           (cache-control-for "/app/dist/abc123def456.png" {:status 200 :body "x"}))))
+  (testing "a 304 keeps the freshness information the browser already stored"
+    (is (= "public, max-age=31536000"
+           (cache-control-for "/app/dist/abc123def456.png" {:status 304}))))
+  (testing "a 404 for a hashed asset is never cached: during a rolling deploy a client can reach
+            an instance that does not have the file yet, and caching that leaves the asset broken"
+    (doseq [status [404 500 302]]
+      (is (= "max-age=0, no-cache, must-revalidate, proxy-revalidate"
+             (cache-control-for "/app/dist/abc123def456.png" {:status status :body "nope"}))
+          (str "status " status))))
+  (testing "a missing font is not cached either"
+    (is (= "max-age=0, no-cache, must-revalidate, proxy-revalidate"
+           (cache-control-for "/app/fonts/Lato/lato-v16-latin-regular.woff2" {:status 404})))))

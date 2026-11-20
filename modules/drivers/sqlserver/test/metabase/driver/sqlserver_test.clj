@@ -2,6 +2,7 @@
   {:clj-kondo/config '{:linters {:deprecated-var {:exclude {metabase.test.data/mbql-query {:namespaces [metabase.driver.sqlserver-test]}
                                                             metabase.test.data/run-mbql-query {:namespaces [metabase.driver.sqlserver-test]}}}}}}
   (:require
+   [clojure.java.jdbc :as jdbc]
    [clojure.string :as str]
    [clojure.test :refer :all]
    [colorize.core :as colorize]
@@ -27,7 +28,9 @@
    [metabase.query-processor.test :as qp]
    [metabase.query-processor.test-util :as qp.test-util]
    [metabase.query-processor.timezone :as qp.timezone]
+   [metabase.sync.core :as sync]
    [metabase.test :as mt]
+   [metabase.test.data.interface :as tx]
    [metabase.test.util.timezone :as test.tz]
    [metabase.util :as u]
    [metabase.util.date-2 :as u.date]
@@ -185,7 +188,6 @@
                                  config/local-process-uuid)
             :database           "birddb"
             :encrypt            false
-            :instanceName       nil
             :loginTimeout       10
             :password           "toucans"
             :port               1433
@@ -199,7 +201,30 @@
                                                     :db                 "birddb"
                                                     :host               "localhost"
                                                     :port               1433
-                                                    :additional-options "trustServerCertificate=false"})))))
+                                                    :additional-options "trustServerCertificate=false"}))))
+  (testing "instanceName is omitted when no instance is supplied — mssql-jdbc treats an empty string as a named instance, which breaks Microsoft Fabric and Synapse serverless endpoints (#81270)"
+    (doseq [instance [nil "" "   "]]
+      (testing (pr-str instance)
+        (is (not (contains? (sql-jdbc.conn/connection-details->spec :sqlserver
+                                                                    {:user "cam", :password "toucans", :db "birddb",
+                                                                     :host "localhost", :port 1433, :instance instance})
+                            :instanceName))))))
+  (testing "instanceName is passed through when the user supplies one"
+    (is (= "MYINSTANCE"
+           (:instanceName (sql-jdbc.conn/connection-details->spec :sqlserver
+                                                                  {:user "cam", :password "toucans", :db "birddb",
+                                                                   :host "localhost", :instance "MYINSTANCE"}))))))
+
+(deftest ^:parallel reject-inherited-disallowed-parameters-in-host-test
+  (mt/test-driver :sqlserver
+    (testing "parameters every SQL-JDBC driver disallows are refused in `host` too"
+      (are [bad-option] (thrown-with-msg? clojure.lang.ExceptionInfo
+                                          #"Potentially dangerous keys in connection details"
+                                          (driver/validate-db-details! :sqlserver {:host (str "sql.example.com;" bad-option)
+                                                                                   :db   "db"}))
+        "hostnameverifier=bad.Verifier"
+        "sslfactory=bad.Factory"
+        "loggerFile=/tmp/x"))))
 
 (deftest ^:parallel reject-details-with-dangerous-additional-options-test
   (mt/test-driver :sqlserver
@@ -208,7 +233,7 @@
         (are [bad-option] (let [bad-opts-details (assoc details :additional-options bad-option)
                                 bad-host-details (update details :host str ";" bad-option)]
                             (is (thrown-with-msg? java.lang.Exception
-                                                  #"Potentially dangerous keys in connection details"
+                                                  #"Potentially dangerous keys in additional options"
                                                   (driver/can-connect? :sqlserver bad-opts-details)))
                             (is (thrown-with-msg? java.lang.Exception
                                                   #"Potentially dangerous keys in connection details"
@@ -231,6 +256,24 @@
           " "
           "trustServerCertificate=false"
           "trustStore=/path/to/store;trustStorePassword=password;trustStoreType=pkcs12")))))
+
+(deftest ^:parallel validate-db-details-inherits-shared-denylist-test
+  (testing "SQL Server also inherits the shared SQL-JDBC denylist, not just its own keys"
+    (doseq [opt ["socketFactory=evil.Factory"   ; shared list, distinct from sqlserver's socketFactoryClass
+                 "sslfactory=evil.Factory"
+                 "dnsResolver=evil.Resolver"
+                 "queryInterceptors=evil.Interceptor"]]
+      (testing opt
+        (is (thrown-with-msg?
+             java.lang.Exception #"[Dd]angerous keys"
+             (driver/validate-db-details! :sqlserver {:additional-options opt}))))))
+  (testing "sqlserver's own denylist keys are still rejected"
+    (doseq [opt ["socketFactoryClass=evil.Factory"
+                 "accessTokenCallbackClass=evil.Callback"]]
+      (testing opt
+        (is (thrown-with-msg?
+             java.lang.Exception #"[Dd]angerous keys"
+             (driver/validate-db-details! :sqlserver {:additional-options opt})))))))
 
 (deftest ^:parallel add-max-results-limit-test
   (mt/test-driver :sqlserver
@@ -326,6 +369,29 @@
                                  :order-by     [[:asc $id]]
                                  :limit        5}
                   :limit        3}))))))))
+
+(deftest ^:parallel page-adds-order-by-when-none-present-test
+  (testing "Regression for #81988."
+    (testing "no existing ORDER BY -> synthetic ORDER BY (SELECT NULL) added"
+      (is (= {:order-by [[{:select [nil]}]]
+              :offset   [:inline 0]
+              :fetch    [:inline 200]}
+             (sql.qp/apply-top-level-clause :sqlserver :page {}
+                                            {:page {:page 1 :items 200}}))))
+    (testing "existing ORDER BY preserved"
+      (let [existing-order-by [[[:field "id" nil] :asc]]]
+        (is (= {:order-by existing-order-by
+                :offset   [:inline 0]
+                :fetch    [:inline 200]}
+               (sql.qp/apply-top-level-clause :sqlserver :page
+                                              {:order-by existing-order-by}
+                                              {:page {:page 1 :items 200}})))))
+    (testing "later pages compute OFFSET from (page - 1) * items"
+      (is (= {:order-by [[{:select [nil]}]]
+              :offset   [:inline 400]
+              :fetch    [:inline 200]}
+             (sql.qp/apply-top-level-clause :sqlserver :page {}
+                                            {:page {:page 3 :items 200}}))))))
 
 (deftest ^:parallel locale-bucketing-test
   (mt/test-driver :sqlserver
@@ -964,6 +1030,39 @@
         (is (= :type/BigInteger
                (t2/select-one-fn :base_type :model/Field (mt/id :bigint_identity_test :id))))))))
 
+(def ^:private udt-alias-db-details
+  (delay (mt/dbdef->connection-details :sqlserver :db {:database-name "udt_alias_test"})))
+
+(def ^:private udt-alias-db-ddl
+  ["CREATE TYPE dbo.Key10 FROM varchar(10);"
+   "CREATE TYPE dbo.Importe FROM numeric(19,2);"
+   (str "CREATE TABLE dbo.udt_alias_test ("
+        "  id int NOT NULL PRIMARY KEY,"
+        "  customer dbo.Key10 NOT NULL,"
+        "  amount   dbo.Importe NULL,"
+        "  plain    varchar(10) NULL);")])
+
+(defn- create-udt-alias-db! []
+  (tx/drop-if-exists-and-create-db! :sqlserver "udt_alias_test")
+  (let [spec (sql-jdbc.conn/connection-details->spec :sqlserver @udt-alias-db-details)]
+    (doseq [stmt udt-alias-db-ddl]
+      (jdbc/execute! spec [stmt] {:transaction? false}))))
+
+(deftest user-defined-type-alias-sync-test
+  (testing "UDT aliases (like `CREATE TYPE Key10 FROM varchar(10)`) sync to their underlying base type (#62335)"
+    (mt/test-driver :sqlserver
+      (create-udt-alias-db!)
+      (mt/with-temp [:model/Database database {:engine :sqlserver, :details @udt-alias-db-details}]
+        (sync/sync-database! database)
+        (let [table-id (t2/select-one-pk :model/Table :db_id (:id database) :name "udt_alias_test")
+              fields   (into {} (map (juxt :name identity))
+                             (t2/select :model/Field :table_id table-id))]
+          (is (=? {:database_type "Key10"   :base_type :type/Text}    (get fields "customer")))
+          (is (=? {:database_type "Importe" :base_type :type/Decimal} (get fields "amount")))
+          (testing "known base types are untouched"
+            (is (=? {:database_type "int"     :base_type :type/Integer} (get fields "id")))
+            (is (=? {:database_type "varchar" :base_type :type/Text}    (get fields "plain")))))))))
+
 (deftest ^:parallel type->database-type-test
   (testing "type->database-type multimethod returns correct SQL Server types"
     (are [base-type expected] (= expected (driver/type->database-type :sqlserver base-type))
@@ -1091,3 +1190,18 @@
       "50% off [x]"   "50[%] off [[]x]"
       ;; `[` is escaped first, so the brackets the other replacements introduce are not re-escaped
       "x[%]y"         "x[[][%]]y")))
+
+(deftest cancelation-poisons-connection-test
+  (testing "discarding the Connection a query canceled on leaves the pool able to serve later queries (#39018)"
+    (mt/test-driver :sqlserver
+      (is (true? (sql-jdbc.execute/cancelation-poisons-connection? :sqlserver))
+          "SQL Server does not recover from a cancelation on its own, so the Connection must not be recycled")
+      (letfn [(rows [table n]
+                (let [mp (mt/metadata-provider)]
+                  (cond-> (lib/query mp (lib.metadata/table mp (mt/id table)))
+                    n    (lib/limit n)
+                    true (-> qp/process-query mt/rows))))]
+        ;; stopping at the limit leaves the statement producing, which is what triggers the cancel-and-discard
+        (is (= 4 (count (rows :venues 4))))
+        (testing "and a later query reading every row still succeeds"
+          (is (= 1000 (count (rows :checkins nil)))))))))

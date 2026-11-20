@@ -5,6 +5,7 @@
    [metabase.activity-feed.api]
    [metabase.agent-api.api]
    [metabase.analytics.api]
+   [metabase.analytics.api.metaplow-proxy]
    [metabase.analytics.api.proxy]
    [metabase.api-keys.api]
    [metabase.api.docs]
@@ -55,6 +56,7 @@
    [metabase.revisions.api]
    [metabase.search.api]
    [metabase.segments.api]
+   [metabase.server.streaming-response :as streaming-response]
    [metabase.session.api]
    [metabase.settings-rest.api]
    [metabase.setup-rest.api]
@@ -80,6 +82,7 @@
          metabase.activity-feed.api/keep-me
          metabase.agent-api.api/keep-me
          metabase.analytics.api/keep-me
+         metabase.analytics.api.metaplow-proxy/keep-me
          metabase.analytics.api.proxy/keep-me
          metabase.api-keys.api/keep-me
          metabase.api.util/keep-me
@@ -147,9 +150,29 @@
   (cond-> x
     (simple-symbol? x) api.macros/ns-handler))
 
+(defn- sanitize-streaming-errors
+  "Middleware that reduces any error written by a streaming response body to
+  [[metabase.public-sharing-rest.api/error-response]]. The public and embedding route wrappers catch and genericize
+  exceptions thrown by the handler, but a streaming body runs after the handler has returned, so a query failure --
+  or an exception attaching the Card's query as `ex-data` -- would otherwise reach an unauthenticated client as-is.
+
+  This lives here rather than next to those wrappers in [[metabase.api.routes.common]] because the `api` module can't
+  depend on `server` (which depends on the query processor, which depends on `api`)."
+  [handler]
+  (fn [request respond raise]
+    (handler request
+             (fn [response]
+               (respond (streaming-response/with-error-response-fn
+                          response
+                          metabase.public-sharing-rest.api/error-response)))
+             raise)))
+
+(def ^:private ^{:arglists '([handler])} +sanitize-streaming-errors
+  (routes.common/wrap-middleware-for-open-api-spec-generation sanitize-streaming-errors))
+
 (defn- +auth                    [handler] (routes.common/+auth                    (->handler handler)))
-(defn- +message-only-exceptions [handler] (routes.common/+message-only-exceptions (->handler handler)))
-(defn- +public-exceptions       [handler] (routes.common/+public-exceptions       (->handler handler)))
+(defn- +message-only-exceptions [handler] (routes.common/+message-only-exceptions (+sanitize-streaming-errors (->handler handler))))
+(defn- +public-exceptions       [handler] (routes.common/+public-exceptions       (+sanitize-streaming-errors (->handler handler))))
 
 (declare routes)
 
@@ -168,7 +191,7 @@
    "/ai-entity-analysis"   metabase.metabot.api.entity-analysis/routes
    "/alert"                (+auth metabase.pulse.api/alert-routes)
    "/analytics"            (+auth 'metabase.analytics.api)
-   "/analytics-proxy"      (+public-exceptions 'metabase.analytics.api.proxy)
+   "/analytics-proxy"      (+public-exceptions metabase.analytics.api.proxy/routes)
    "/api-key"              (+auth 'metabase.api-keys.api)
    "/automagic-dashboards" (+auth metabase.xrays.api/automagic-dashboards-routes)
    "/bookmark"             (+auth 'metabase.bookmarks.api)
@@ -207,6 +230,7 @@
    "/measure"              (+auth 'metabase.measures.api)
    "/metabase-mcp"         (metabase.mcp.api/+mcp-enabled metabase.mcp.api/handler)
    "/metabot"              metabase.metabot.api/routes
+   "/metaplow-proxy"       (+public-exceptions metabase.analytics.api.metaplow-proxy/routes)
    "/metric"               (+auth 'metabase.metrics.api)
    "/model-index"          (+auth 'metabase.indexed-entities.api)
    "/native-query-snippet" (+auth 'metabase.native-query-snippets.api)

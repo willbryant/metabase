@@ -13,6 +13,7 @@
    [metabase.permissions.models.permissions-group :as perms-group]
    [metabase.test :as mt]
    [metabase.test.fixtures :as fixtures]
+   [metabase.warehouse-schema.models.field-values :as field-values]
    [toucan2.core :as t2]))
 
 (use-fixtures :once (fixtures/initialize :db :test-users))
@@ -406,14 +407,26 @@
         raw-values ["African" "American"]]
     (testing "cache hits return raw values"
       (is (= raw-values
-             (#'entity-details/get-field-values {field-id {:values raw-values}} field-id))))
-    (testing "cache misses return the same raw-value shape"
-      (with-redefs [params.field-values/current-user-can-fetch-field-values?        (constantly true)
-                    params.field-values/get-or-create-field-values!                 (constantly {:values raw-values})
-                    params.field-values/get-or-create-field-values-for-current-user!
-                    (constantly {:values (mapv vector raw-values)})]
-        (is (= raw-values
-               (#'entity-details/get-field-values {} field-id)))))))
+             (#'entity-details/get-field-values {field-id {:values raw-values}} field-id))))))
+
+(deftest table-details-read-cached-field-values-in-one-query-test
+  (testing "table details read the cached values of unrestricted columns in one query, not one per column"
+    (mt/with-temp-copy-of-db
+      (mt/with-current-user (mt/user->id :rasta)
+        (let [field-ids   (t2/select-pks-set :model/Field :table_id (mt/id :venues))
+              details     #(:structured-output
+                            (entity-details/get-table-details {:entity-type :table, :entity-id (mt/id :venues)}))
+              query-count (fn [field-ids-with-values]
+                            (with-redefs [field-values/field-should-have-field-values?
+                                          #(contains? field-ids-with-values (:id %))]
+                              ;; creates the FieldValues and warms the memoized field and table lookups
+                              (is (= field-ids-with-values
+                                     (set (keep #(when (:field_values %) (:field_id %)) (:fields (details))))))
+                              (t2/with-call-count [call-count]
+                                (details)
+                                (call-count))))]
+          (is (= (query-count #{(first field-ids)})
+                 (query-count field-ids))))))))
 
 ;;; ============================================================
 ;;; Base-table surfacing on get-metric-details (regression)
@@ -457,7 +470,7 @@
                                                   :type          :metric}]
         (mt/with-no-data-perms-for-all-users!
           (mt/with-current-user (mt/user->id :rasta)
-            (with-redefs [params.field-values/field-id->field-values-for-current-user
+            (with-redefs [params.field-values/get-or-create-field-values-by-field-id!
                           (fn [_]
                             (throw (ex-info "field values must not be fetched" {})))]
               (let [output (:structured-output
@@ -654,6 +667,21 @@
                 (is (not (contains? output :metrics)))
                 (is (= 0 @calls))))))))))
 
+(deftest answer-sources-omits-models-with-no-visible-fields-test
+  (testing "a model built on a table the user has no view-data permission on is omitted entirely from
+            list_available_data_sources, rather than listed with :fields []"
+    (mt/with-temp [:model/Card    {model-id :id} {:dataset_query (mt/mbql-query orders)
+                                                  :type          :model
+                                                  :collection_id nil}
+                   :model/Metabot metabot {:name          "root metabot"
+                                           :collection_id nil
+                                           :use_verified_content false}]
+      (mt/with-no-data-perms-for-all-users!
+        (mt/with-current-user (mt/user->id :rasta)
+          (let [{:keys [structured-output]} (entity-details/answer-sources
+                                             {:metabot-id (:entity_id metabot)})]
+            (is (not (contains? (set (map :id (:models structured-output))) model-id)))))))))
+
 (deftest related-tables-with-fields-capped-test
   (testing (str "FK-related-table *column* expansion is capped at `max-related-tables-with-fields` so a table "
                 "with a very large / highly-connected schema can't fetch and pin an unbounded number of columns "
@@ -848,8 +876,8 @@
             (is (contains? user-id :fk_target_portable_fk))))))))
 
 (deftest related-tables-permission-checks-are-memoized-test
-  (testing "the permission gate on FK expansion re-asks the same tables the same questions, so an agent
-            turn's memo cuts the app-DB reads it costs ( gap 3)"
+  (testing "the entity-details entry point binds the permission memo itself, so an outer agent-turn memo
+            does not change its app-DB reads or output"
     (mt/test-driver :h2
       (mt/with-no-data-perms-for-all-users!
         (perms/set-database-permission! (perms-group/all-users) (mt/id) :perms/view-data :unrestricted)
@@ -864,8 +892,8 @@
                 uncached (t2/with-call-count [calls] (details) (calls))
                 cached   (metabot.perms/with-cache
                            (t2/with-call-count [calls] (details) (calls)))]
-            (is (< cached uncached)
-                (format "expected fewer app-DB calls with the memo bound (cached %d, uncached %d)"
+            (is (= cached uncached)
+                (format "expected the entry point's own memo to make the outer binding redundant (cached %d, uncached %d)"
                         cached uncached))
             (testing "and the output is unchanged"
               (is (= (:structured-output (metabot.perms/with-cache (details)))

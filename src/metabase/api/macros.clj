@@ -236,16 +236,23 @@
      :respond-raise (s/? (s/cat :respond symbol?
                                 :raise   symbol?))))))
 
+(def ^:private default-params-schema
+  "Schema for route params, query params, and the request body when an endpoint binds them without declaring one. A
+  bare `:map` strips every key on decode, so endpoints have to declare the keys they read."
+  [:map])
+
 (mu/defn- parse-params :- ::params
   [params]
-  (letfn [(parse-schema [param]
-            (cond-> param
-              (:schema param) (update :schema :schema)))]
+  (letfn [(parse-schema [k param]
+            (cond
+              (:schema param)                      (update param :schema :schema)
+              (contains? #{:route :query :body} k) (assoc param :schema default-params-schema)
+              :else                                param))]
     (merge
      (reduce
       (fn [params k]
         (cond-> params
-          (k params) (update k parse-schema)))
+          (k params) (update k #(parse-schema k %))))
       (dissoc params :respond-raise)
       [:route :query :body :request])
      (when-let [{:keys [respond raise]} (:respond-raise params)]
@@ -398,21 +405,20 @@
   (let [params  (or params {})
         decoded ((decoder schema) params)]
     (when-not (mr/validate schema decoded)
-      (throw (ex-info (format "Invalid %s" (case params-type
-                                             :route   "route parameters"
-                                             :query   "query parameters"
-                                             :body    "body"
-                                             :request "request"))
-                      (let [explanation     (mr/explain schema decoded)
-                            specific-errors (invalid-params-specific-errors explanation)
-                            errors          (invalid-params-errors explanation)]
+      (let [explanation (mr/explain schema decoded)]
+        (throw (ex-info (format "Invalid %s" (case params-type
+                                               :route   "route parameters"
+                                               :query   "query parameters"
+                                               :body    "body"
+                                               :request "request"))
                         {:status-code     400
                          #_:api/debug     #_{:params-type params-type
-                                             :schema      (mc/form schema)
-                                             :params      params
-                                             :decoded     decoded}
-                         :specific-errors specific-errors
-                         :errors          errors}))))
+                                             :schema  (mc/form schema)
+                                             :params  params
+                                             :decoded decoded}
+                         :specific-errors (invalid-params-specific-errors explanation)
+                         :errors          (invalid-params-errors explanation)
+                         :response/keys   #{:specific-errors}}))))
     decoded))
 
 (mu/defn- decode-and-validate-params-form
@@ -595,10 +601,13 @@
     :query (some-> (:query-params request) (update-keys keyword))))
 
 (mu/defn- request-body
+  "The body params of `request`: the parts of a multipart request, the form params of a form request, or the parsed
+  JSON body. An unparsed body (an `InputStream`) is not a param map."
   [request :- :map]
-  (or (some-> (not-empty (:form-params request)) (update-keys keyword))
+  (or (some-> (not-empty (:multipart-params request)) (update-keys keyword))
+      (some-> (not-empty (:form-params request)) (update-keys keyword))
       (when-let [body (:body request)]
-        (when-not (instance? org.eclipse.jetty.ee9.nested.HttpInput body)
+        (when-not (instance? java.io.InputStream body)
           body))))
 
 (mu/defn- middleware-forms

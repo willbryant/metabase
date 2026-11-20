@@ -3,14 +3,18 @@
   {:clj-kondo/config '{:linters {:deprecated-var {:exclude {metabase.test.data/mbql-query {:namespaces [metabase.driver.clickhouse-test]}}}}}}
   (:require
    [clojure.java.jdbc :as jdbc]
+   [clojure.string :as str]
    [clojure.test :refer :all]
    [honey.sql :as sql]
    [metabase.driver :as driver]
    [metabase.driver.clickhouse-qp :as clickhouse-qp]
    [metabase.driver.clickhouse-version :as clickhouse-version]
+   [metabase.driver.settings :as driver.settings]
    [metabase.driver.sql-jdbc :as sql-jdbc]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+   [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
    [metabase.driver.sql.query-processor :as sql.qp]
+   [metabase.driver.util :as driver.u]
    [metabase.lib-be.core :as lib-be]
    [metabase.lib.card :as lib.card]
    [metabase.lib.core :as lib]
@@ -21,9 +25,13 @@
    [metabase.test :as mt]
    [metabase.test.data.clickhouse :as ctd]
    [metabase.upload.impl-test :as upload-test]
+   [metabase.util :as u]
    [metabase.util.honey-sql-2 :as h2x]
    [taoensso.nippy :as nippy]
-   [toucan2.tools.with-temp :as t2.with-temp]))
+   [toucan2.tools.with-temp :as t2.with-temp])
+  (:import
+   (com.clickhouse.jdbc ConnectionImpl)
+   (java.sql Connection)))
 
 (set! *warn-on-reflection* true)
 
@@ -51,6 +59,40 @@
            (let [details (mt/dbdef->connection-details :clickhouse :db {:database-name "default"})
                  spec    (sql-jdbc.conn/connection-details->spec :clickhouse details)]
              (driver/db-default-timezone :clickhouse spec))))))
+
+(deftest clickhouse-report-timezone-reaches-server-test
+  ;; Regression for #79671.
+  (mt/test-driver :clickhouse
+    (mt/with-report-timezone-id! "America/Santiago"
+      (is (= [["America/Santiago" "America/Santiago"]]
+             (->> "SELECT timezone() AS tz, getSetting('session_timezone') AS s"
+                  (lib/native-query (mt/metadata-provider))
+                  qp/process-query
+                  mt/rows))))))
+
+(deftest ^:synchronized clickhouse-session-timezone-does-not-leak-across-borrows-test
+  (mt/test-driver :clickhouse
+    (sql-jdbc.conn/invalidate-pool-for-db! (mt/db))
+    (let [underlying-conn-ids (atom [])
+          observe (fn [opts]
+                    (sql-jdbc.execute/do-with-connection-with-options
+                     :clickhouse (mt/id) opts
+                     (fn [^Connection conn]
+                       (swap! underlying-conn-ids conj
+                              (System/identityHashCode (.unwrap conn ConnectionImpl)))
+                       (with-open [stmt (.createStatement conn)
+                                   rs   (.executeQuery stmt "SELECT getSetting('session_timezone')")]
+                         (.next rs)
+                         (.getString rs 1)))))]
+      (is (= "America/Santiago" (observe {:session-timezone "America/Santiago"})))
+      (let [result (observe nil)]
+        ;; Guard: the leak is only observable when the pool hands us the same underlying
+        ;; ConnectionImpl. With a freshly invalidated pool and back-to-back borrows this holds;
+        ;; if it stops holding, the test has to be fixed.
+        (is (apply = @underlying-conn-ids)
+            (str "expected both borrows to reuse the same underlying connection: " @underlying-conn-ids))
+        (is (= "" result)
+            "a borrow without :session-timezone must not inherit the previous borrow's timezone")))))
 
 (deftest ^:parallel clickhouse-connection-string
   (testing "connection with no additional options"
@@ -613,3 +655,36 @@
           (is (= "SELECT quantile(0.7)(?)" sql))
           (is (= [hostile] params))
           (is (not (re-find #"FROM secret" sql))))))))
+
+(deftest ^:synchronized cancel-slow-query-via-query-timeout-test
+  (mt/test-driver :clickhouse
+    (testing "Slow query is cancelled when *query-timeout-ms* elapses"
+      (sql-jdbc.conn/invalidate-pool-for-db! (mt/id))
+      ;; Make the pool before the binding. c3p0 sets `unreturnedConnectionTimeout` from `*query-timeout-ms*`.
+      (qp/process-query (lib/native-query (mt/metadata-provider) "SELECT 1"))
+      (binding [driver.settings/*query-timeout-ms* 5000]
+        (let [timer   (u/start-timer)
+              query   (lib/native-query (mt/metadata-provider)
+                                        "SELECT sleepEachRow(1) FROM numbers(120) SETTINGS max_block_size = 1")
+              result  (try
+                        (qp/process-query query)
+                        (catch Throwable e e))
+              elapsed (u/since-ms timer)]
+          (is (instance? Throwable result))
+          (is (str/includes? (ex-message result) "QUERY_WAS_CANCELLED"))
+          (is (<= driver.settings/*query-timeout-ms*
+                  elapsed
+                  (* 3 driver.settings/*query-timeout-ms*))))))))
+
+(deftest ^:parallel url-building-details-reject-separators-test
+  (doseq [details [{:host "https://a/b;c" :port 8443 :dbname "d"}
+                   {:host "https://a/b?c" :port 8443 :dbname "d"}]]
+    (testing (pr-str details)
+      (is (=? {:status-code 400}
+              (try (driver.u/validate-connection-parameters! :clickhouse details)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e)))))))
+  (testing "a host written as a URL with a scheme and path is still allowed"
+    (is (nil? (driver.u/validate-connection-parameters!
+               :clickhouse {:host "https://ch.example.com/x" :port 8443 :dbname "d"})))))
