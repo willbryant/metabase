@@ -1,25 +1,32 @@
 import type { Store } from "@reduxjs/toolkit";
+import userEvent from "@testing-library/user-event";
 import fetchMock from "fetch-mock";
 
 import {
+  setupCollectionByIdEndpoint,
   setupCollectionItemsEndpoint,
   setupCollectionsEndpoints,
   setupDatabasesEndpoints,
   setupGdriveGetFolderEndpoint,
   setupSearchEndpoints,
   setupSettingEndpoint,
+  setupUserMetabotPermissionsEndpoint,
 } from "__support__/server-mocks";
 import {
   createMockAppState,
+  createMockDashboardState,
   createMockEmbedOptions,
   createMockEmbedState,
   createMockState,
 } from "__support__/state";
 import {
   act,
+  createMockMediaQueryList,
   renderWithProviders,
   screen,
+  waitFor,
   waitForLoaderToBeRemoved,
+  within,
 } from "__support__/ui";
 import { ROOT_COLLECTION } from "metabase/common/collections/constants";
 import {
@@ -27,16 +34,18 @@ import {
   OPEN_NAVBAR,
   isNavbarOpenForPathname,
 } from "metabase/redux/app";
-import type { State } from "metabase/redux/store";
+import type { DashboardState, State } from "metabase/redux/store";
 import { Route } from "metabase/router";
 import * as iframeUtils from "metabase/utils/iframe";
-import type { User } from "metabase-types/api";
+import type { Collection, User } from "metabase-types/api";
 import {
   createMockCollection,
+  createMockDashboard,
   createMockDatabase,
   createMockUser,
 } from "metabase-types/api/mocks";
 
+import { AppBarContainer } from "./AppBar";
 import { Navbar } from "./Navbar";
 
 type SetupOpts = {
@@ -45,6 +54,11 @@ type SetupOpts = {
   pathname?: string;
   user?: User | null;
   embedOptions?: Record<string, string | boolean>;
+  collections?: Collection[];
+  trashCollection?: Collection;
+  dashboardState?: DashboardState;
+  /** Also renders the app bar, whose toggle opens and closes the navbar */
+  withAppBar?: boolean;
 };
 
 async function setup({
@@ -53,8 +67,14 @@ async function setup({
   route = pathname,
   user = createMockUser(),
   embedOptions = {},
+  collections = [],
+  trashCollection,
+  dashboardState,
+  withAppBar = false,
 }: SetupOpts = {}) {
-  setupCollectionsEndpoints({ collections: [] });
+  setupCollectionsEndpoints({ collections, trashCollection });
+  setupCollectionByIdEndpoint({ collections });
+  setupUserMetabotPermissionsEndpoint();
   setupDatabasesEndpoints([createMockDatabase()]);
   setupSearchEndpoints([]);
   setupCollectionItemsEndpoint({
@@ -77,15 +97,25 @@ async function setup({
       options: createMockEmbedOptions(embedOptions),
     }),
     currentUser: user,
+    ...(dashboardState ? { dashboard: dashboardState } : {}),
   });
 
   const { store } = renderWithProviders(
-    <Route path={route} element={<Navbar />} />,
+    <Route
+      path={route}
+      element={
+        <>
+          {withAppBar && <AppBarContainer />}
+          <Navbar />
+        </>
+      }
+    />,
     {
       storeInitialState,
       initialRoute: pathname,
       withRouter: true,
       withDND: true,
+      withKBar: withAppBar,
     },
   );
 
@@ -190,6 +220,114 @@ describe("nav > containers > Navbar > Core App", () => {
     });
     dispatchLocationChange({ store, pathname: "/collection/6" });
     await expectNavbarClosed();
+  });
+
+  describe("trash highlight on a dashboard", () => {
+    const DASHBOARD_ID = 42;
+    const dashboardCollection = createMockCollection({
+      id: 2,
+      name: "Dashboard collection",
+    });
+    const trashCollection = createMockCollection({
+      id: 20000000,
+      name: "Trash",
+      type: "trash",
+    });
+
+    async function setupDashboardPage({ archived }: { archived: boolean }) {
+      const dashboard = createMockDashboard({
+        id: DASHBOARD_ID,
+        collection_id: Number(dashboardCollection.id),
+        archived,
+      });
+      const store = await setup({
+        route: "/dashboard/:slug",
+        pathname: `/dashboard/${DASHBOARD_ID}`,
+        collections: [dashboardCollection],
+        trashCollection,
+        dashboardState: createMockDashboardState({
+          dashboardId: DASHBOARD_ID,
+          dashboards: {
+            [DASHBOARD_ID]: { ...dashboard, dashcards: [] },
+          },
+        }),
+      });
+      // The navbar collapses on dashboard routes, so open it to see the tree.
+      act(() => {
+        store.dispatch({ type: OPEN_NAVBAR });
+      });
+      return store;
+    }
+
+    const getTrashItem = () => screen.getByRole("treeitem", { name: /Trash/ });
+    const getDashboardCollectionItem = () =>
+      screen.getByRole("treeitem", { name: /Dashboard collection/ });
+
+    it("should highlight the dashboard's collection when the dashboard in the store is not archived", async () => {
+      await setupDashboardPage({ archived: false });
+
+      await waitFor(() => {
+        expect(getDashboardCollectionItem()).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+      });
+      expect(getTrashItem()).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("should highlight the trash when the dashboard in the store is archived", async () => {
+      await setupDashboardPage({ archived: true });
+
+      await waitFor(() => {
+        expect(getTrashItem()).toHaveAttribute("aria-selected", "true");
+      });
+      expect(getDashboardCollectionItem()).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+    });
+  });
+
+  describe("small screens (metabase#15006)", () => {
+    const collection = createMockCollection({
+      id: 2,
+      name: "First collection",
+    });
+
+    beforeEach(() => {
+      jest
+        .spyOn(window, "matchMedia")
+        .mockReturnValue(createMockMediaQueryList({ matches: true }));
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("starts closed, toggles from the app bar, and closes when a collection is picked", async () => {
+      await setup({
+        pathname: "/collection/root",
+        route: "/collection/:slug",
+        collections: [collection],
+        withAppBar: true,
+      });
+      await expectNavbarClosed();
+
+      const toggle = screen.getByRole("button", { name: "Toggle sidebar" });
+      await userEvent.click(toggle);
+      await expectNavbarOpen();
+      await userEvent.click(toggle);
+      await expectNavbarClosed();
+
+      await userEvent.click(toggle);
+      await expectNavbarOpen();
+      await userEvent.click(
+        within(screen.getByTestId("main-navbar-root")).getByText(
+          collection.name,
+        ),
+      );
+      await expectNavbarClosed();
+    });
   });
 
   describe("embedded", () => {
